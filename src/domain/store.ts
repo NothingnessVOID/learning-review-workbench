@@ -72,6 +72,22 @@ export class Store {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,actor TEXT NOT NULL,operation TEXT NOT NULL,object_id TEXT,revision_before INTEGER,revision_after INTEGER,request_id TEXT);CREATE TABLE IF NOT EXISTS revisions(id TEXT PRIMARY KEY,table_name TEXT NOT NULL,object_id TEXT NOT NULL,revision INTEGER NOT NULL,data TEXT NOT NULL,UNIQUE(table_name,object_id,revision));CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,result TEXT NOT NULL);CREATE TABLE IF NOT EXISTS import_previews(id TEXT PRIMARY KEY,data TEXT NOT NULL);PRAGMA user_version=1;`,
     );
+    if (this.setting("case_description_index_version") !== 2) {
+      for (const row of this.db.prepare("SELECT id,data FROM cases").all()) {
+        const value = JSON.parse(row.data as string);
+        const text = [value.title, value.description, value.source_identity]
+          .filter(Boolean)
+          .join("\n");
+        this.db
+          .prepare("UPDATE cases SET search_text=?,title=? WHERE id=?")
+          .run(
+            norm(text),
+            value.title ?? value.description?.slice(0, 80) ?? "案例",
+            row.id,
+          );
+      }
+      this.setting("case_description_index_version", 2);
+    }
     if (!this.setting("permissions"))
       this.setting("permissions", defaultPermissions);
     chmodSync(this.dbPath, 0o600);
@@ -182,6 +198,8 @@ export class Store {
       v.body_md,
       v.original_text,
       v.text,
+      v.description,
+      v.source_identity,
       ...(v.aliases ?? []),
       ...(v.blocks ?? []).map((b: Obj) => b.body_md),
     ]

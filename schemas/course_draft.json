@@ -99,6 +99,11 @@
             "type": "string",
             "maxLength": 60
           },
+          "content_identity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
           "blocks": {
             "maxItems": 300,
             "type": "array",
@@ -151,6 +156,19 @@
                         "minLength": 1,
                         "maxLength": 160,
                         "pattern": "^[\\w.-]+$"
+                      },
+                      "source_path": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "block_order": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000
+                      },
+                      "content_identity": {
+                        "type": "string",
+                        "maxLength": 300
                       }
                     },
                     "required": [
@@ -172,8 +190,7 @@
                 "body_md",
                 "origin_kind",
                 "transformation",
-                "source_refs",
-                "verification_status"
+                "source_refs"
               ],
               "additionalProperties": false
             }
@@ -187,7 +204,6 @@
         "required": [
           "id",
           "title",
-          "parent_id",
           "order",
           "content_kind",
           "blocks"
@@ -210,7 +226,17 @@
           },
           "disposition": {
             "type": "string",
-            "maxLength": 80
+            "enum": [
+              "main_teaching",
+              "recap",
+              "case",
+              "question_answer",
+              "background",
+              "notice",
+              "retained",
+              "unresolved",
+              "included"
+            ]
           },
           "topic_ids": {
             "maxItems": 100,
@@ -221,6 +247,11 @@
               "maxLength": 160,
               "pattern": "^[\\w.-]+$"
             }
+          },
+          "content_identity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
           }
         },
         "required": [
@@ -261,8 +292,7 @@
       "required": [
         "kind",
         "name"
-      ],
-      "additionalProperties": false
+      ]
     },
     "client_request_id": {
       "type": "string",
@@ -277,8 +307,6 @@
     "source_version_ids",
     "topics",
     "coverage",
-    "knowledge_candidates",
-    "unresolved_questions",
     "client_request_id"
   ],
   "additionalProperties": false

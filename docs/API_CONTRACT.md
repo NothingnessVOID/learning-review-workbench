@@ -55,3 +55,19 @@ export_data {scope:'all'|'course'|'knowledge'|'notes',ids?:string[],share?:boole
 create_backup {} => {id,download_url,filename,counts}
 preview_restore {content_base64} => {id,counts,valid:true,warnings:[]}
 commit_restore {preview_id,confirmation:'恢复此备份'} => {restored:true,previous_backup:string}
+
+## v1.1 contract updates
+
+The authoritative input schemas are `src/domain/contracts.ts`; the same strict Zod objects validate service calls and register MCP tools. `docs/TOOL_CONTRACTS.json` is generated input-schema documentation with `tsx scripts/export-schemas.ts`. Object schema version remains 1.0.0; application version is 1.1.0.
+
+Lists accept `limit` (1..100) and zero-based `cursor`. Lists return summaries and `next_cursor`; use the detail tool for full text. Course maps return topic metadata; get_topic supplies the lecture. Read responses are capped at 2 MiB with an explicit PAYLOAD_TOO_LARGE response, never a silent replacement of stored text. Writes do not report failure merely because their returned payload is large after committing.
+
+`list_notes` additionally accepts `from`, `to`, `include_archived`, `type`, `relation_id`. Dates are ISO calendar dates or timestamps with offsets; selected end dates include the whole day. `search_library` includes reviews and cases by default, supports dates and type aliases, and filters permissions before pagination. Review visibility requires every source note to be authorized. Local-only `get_review_result {review_id}` and `get_case {case_id}` open search results.
+
+`get_note` resolves direct relation_ids and confirmed relationships into `resolved_relations` with object titles and web paths, filtered for the caller. `get_review_handoff {note_id,related_note_ids?,include_sources?}` is local-only, defaults to no additional notes or sources, and returns a preview package with capability gaps. It does not send to an external Agent automatically.
+
+`cancel_import_preview {preview_id}` removes an uncommitted preview. Upload bytes live in bounded staging, not duplicate base64 blobs in SQLite options. Committed results remain idempotent; cancelled, failed and expired payloads are cleaned.
+
+`export_data` returns immutable `parameters {scope,ids,share,redactions}` along with preview and file. A share operation redacts only designated textual fields; IDs, keys and reference structure remain unchanged. `create_backup {include_context?:boolean}` defaults false. A context-inclusive backup contains current versioned runtime context, never credentials.
+
+GET `/health` includes `build {version,commit,fingerprint,lock_hash,built_at}` captured when the process starts, and an instance identifier. It does not reveal the data directory or credentials.

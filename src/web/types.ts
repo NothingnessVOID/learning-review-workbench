@@ -60,6 +60,9 @@ export type Card = {
 export type Note = {
   id: string;
   original_text: string;
+  original_preview?: string;
+  content_truncated?: boolean;
+  summary_only?: boolean;
   type: string;
   created_at: string;
   updated_at: string;
@@ -73,6 +76,12 @@ export type Note = {
   reviews?: Review[];
   followups?: Note[];
   relations?: Relation[];
+  resolved_relations?: {
+    id: string;
+    type: string;
+    title: string;
+    web_path: string;
+  }[];
 };
 export type Review = {
   id: string;
@@ -96,7 +105,12 @@ export type Relation = {
 export type LearningState = {
   object_id: string;
   status: string;
-  position?: { topic_id?: string; scroll?: number };
+  position?: {
+    topic_id?: string;
+    scroll?: number;
+    block_id?: string;
+    block_offset?: number;
+  };
   updated_at: string;
   revision: number;
 };

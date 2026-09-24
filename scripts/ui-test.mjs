@@ -11,14 +11,17 @@ const output = new URL("../artifacts/screenshots/", import.meta.url);
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
-  executablePath:
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH
+    ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }
+    : {}),
 });
 const errors = [];
+const context = await browser.newContext();
+await context.tracing.start({ screenshots: true, snapshots: true });
+let page;
 try {
-  const page = await browser.newPage({
-    viewport: { width: 1280, height: 900 },
-  });
+  page = await context.newPage();
+  await page.setViewportSize({ width: 1280, height: 900 });
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (
@@ -118,7 +121,7 @@ try {
   await page
     .locator('textarea[placeholder="粘贴外部复盘结果（Markdown 可用）"]')
     .fill("DEMO UI 复盘结果，保留原话。");
-  await page.getByRole("button", { name: "归档复盘结果" }).click();
+  await page.getByRole("button", { name: "保存这次复盘" }).click();
   await page.getByText("DEMO UI 复盘结果，保留原话。").waitFor();
   await page.getByRole("button", { name: "归档这条记录" }).click();
   await page.goto(`${base}/#notes`);
@@ -177,13 +180,11 @@ try {
   await page.locator(".preview-box .download-link").waitFor();
 
   await page.goto(`${base}/#import`);
-  await page
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "DEMO-ui-smoke.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("DEMO UI 导入样本。\n资料只用于演示。"),
-    });
+  await page.locator("input[type=file]").setInputFiles({
+    name: "DEMO-ui-smoke.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("DEMO UI 导入样本。\n资料只用于演示。"),
+  });
   await page.getByRole("button", { name: "预览导入" }).click();
   await page.locator(".count-grid").waitFor();
   await page.getByRole("button", { name: "确认导入" }).click();
@@ -218,6 +219,26 @@ try {
   console.log(
     "UI smoke passed: reading, source context, position, failure retry, timeline, archive restore, relation review, draft, export, import, 1280/768/390 screenshots.",
   );
+} catch (error) {
+  await mkdir(new URL("../artifacts/ui-regression/", import.meta.url), {
+    recursive: true,
+  });
+  if (page)
+    await page.screenshot({
+      path: fileURLToPath(
+        new URL(
+          "../artifacts/ui-regression/smoke-failure.png",
+          import.meta.url,
+        ),
+      ),
+      fullPage: true,
+    });
+  await context.tracing.stop({
+    path: fileURLToPath(
+      new URL("../artifacts/ui-regression/smoke-trace.zip", import.meta.url),
+    ),
+  });
+  throw error;
 } finally {
   await browser.close();
 }

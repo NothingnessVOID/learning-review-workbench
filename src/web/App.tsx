@@ -1,7 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { downloadUrl, localDraft, messageOf, requestId, rpc } from "./api";
+import { downloadUrl, messageOf, requestId, rpc } from "./api";
+import { normalizeExportParams, usePersistentDraft } from "./drafts";
+import { readableChanges } from "./diff";
+import {
+  captureReaderPosition,
+  chooseReaderPosition,
+  restoreReaderPosition,
+  saveReaderOnPageHide,
+  saveReaderPosition,
+} from "./reading";
 import type {
   Card,
   Course,
@@ -10,6 +25,7 @@ import type {
   Note,
   Permissions,
   Relation,
+  Review,
   SourceRef,
   Status,
   Topic,
@@ -20,15 +36,19 @@ type ComposerDraft = {
   text: string;
   type: string;
   relationId: string;
+  relationLabel: string;
+  relationDismissed: boolean;
   requestId: string;
 };
 const emptyComposer = (): ComposerDraft => ({
   text: "",
   type: "quick",
   relationId: "",
+  relationLabel: "",
+  relationDismissed: false,
   requestId: requestId(),
 });
-const ROUTE_RE = /^#(course|topic|card|note|draft)\/([^/?#]+)/;
+const ROUTE_RE = /^#(course|topic|card|note|draft|case|review)\/([^/?#]+)/;
 function routeFromHash(): Route {
   const hash = decodeURI(location.hash || "#courses");
   const source = /^#source\/([^/?#]+)\/([^/?#]+)/.exec(hash);
@@ -112,8 +132,17 @@ function humanLabel(value: string) {
         secondary_only: "二手来源，待核",
         source_text: "原文资料",
         main_teaching: "主题讲义",
-        source_quote: "原文引述",
+        source_quote: "原文引用",
         source_locatable: "可定位原文",
+        original_quote: "原文引用",
+        direct_quote: "直接引述",
+        ai_paraphrase: "AI 转述",
+        ai_inference: "AI 推断",
+        demo: "演示未核验",
+        paraphrase: "转述整理",
+        summary: "摘要整理",
+        ai_example: "AI 示例",
+        inferred: "推论",
         demo_material: "演示资料",
         transcript: "转写稿",
         cleaned_transcript: "清洗稿",
@@ -202,13 +231,161 @@ function useRemote<T>(
   return { data, error, loading, refresh: () => setVersion((n) => n + 1) };
 }
 
+function usePagedRpc<T>(
+  tool: string,
+  args: Record<string, unknown>,
+  enabled = true,
+) {
+  const [items, setItems] = useState<T[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
+  const [meta, setMeta] = useState<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [version, setVersion] = useState(0);
+  const key = JSON.stringify(args);
+  const generation = useRef(0);
+  useEffect(() => {
+    setItems([]);
+    setCursor(null);
+    setTotal(null);
+    setMeta({});
+    generation.current++;
+  }, [tool, key]);
+  const load = useCallback(
+    async (next?: string | null) => {
+      if (!enabled) return;
+      const current = generation.current;
+      setLoading(true);
+      setError("");
+      try {
+        const result = await rpc<{
+          items: T[];
+          next_cursor: string | null;
+          total?: number;
+          [key: string]: unknown;
+        }>(tool, { ...args, cursor: next || undefined });
+        if (current !== generation.current) return;
+        setItems((previous) =>
+          next
+            ? [
+                ...previous,
+                ...result.items.filter(
+                  (item) =>
+                    !previous.some(
+                      (old) => (old as any).id === (item as any).id,
+                    ),
+                ),
+              ]
+            : result.items,
+        );
+        setCursor(result.next_cursor);
+        setTotal(result.total ?? null);
+        setMeta(result);
+      } catch (e) {
+        if (current === generation.current) setError(messageOf(e));
+      } finally {
+        if (current === generation.current) setLoading(false);
+      }
+    },
+    [tool, key, enabled, loading, version],
+  );
+  useEffect(() => {
+    if (enabled) void load(null);
+  }, [tool, key, enabled, version]);
+  return {
+    items,
+    cursor,
+    total,
+    meta,
+    loading,
+    error,
+    more: () => {
+      if (!loading && cursor) void load(cursor);
+    },
+    refresh: () => setVersion((v) => v + 1),
+  };
+}
+
+function useDialogFocus(open: boolean, onClose: () => void) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open || !dialogRef.current) return;
+    const dialog = dialogRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const changed: { element: HTMLElement; inert: boolean }[] = [];
+    let node: HTMLElement | null = dialog.parentElement;
+    while (node?.parentElement) {
+      for (const child of Array.from(node.parentElement.children))
+        if (child instanceof HTMLElement && child !== node) {
+          changed.push({ element: child, inert: child.inert });
+          child.inert = true;
+        }
+      node = node.parentElement;
+      if (node === document.body) break;
+    }
+    const focusable = () =>
+      Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.inert && el.getClientRects().length > 0);
+    (focusable()[0] || dialog).focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0],
+        last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => {
+      document.removeEventListener("keydown", keydown);
+      for (const { element, inert } of changed) element.inert = inert;
+      previous?.focus();
+    };
+  }, [open]);
+  return dialogRef;
+}
+
 export default function App() {
   const [route, setRoute] = useState<Route>(routeFromHash);
   const [drawer, setDrawer] = useState(false);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composer, setComposer] = useState<ComposerDraft>(() =>
-    localDraft("workbench.quick-draft", emptyComposer()),
+  const [narrow, setNarrow] = useState(
+    () => matchMedia("(max-width: 800px)").matches,
   );
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const composerDialogRef = useDialogFocus(composerOpen, () =>
+    setComposerOpen(false),
+  );
+  const {
+    draft: composer,
+    update: setComposer,
+    current: composerRef,
+    clearSubmitted: clearComposer,
+  } = usePersistentDraft<ComposerDraft>("workbench.quick-draft", emptyComposer);
+  const quickSaving = useRef(false);
+  const [quickBusy, setQuickBusy] = useState(false);
   const [composerState, setComposerState] = useState<
     "idle" | "saving" | "saved" | "failed"
   >("idle");
@@ -221,14 +398,40 @@ export default function App() {
   const [change, setChange] = useState(0);
   const status = useRemote<Status>("get_status", {}, [change]);
   useEffect(() => {
+    const media = matchMedia("(max-width: 800px)");
+    const update = () => setNarrow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (drawer && narrow)
+      sidebarRef.current?.querySelector<HTMLElement>("a,button")?.focus();
+    else if (
+      narrow &&
+      document.activeElement &&
+      sidebarRef.current?.contains(document.activeElement)
+    )
+      menuRef.current?.focus();
+  }, [drawer, narrow]);
+  useEffect(() => {
     const handler = () => {
+      const reader = document.querySelector<HTMLElement>(
+        "[data-course-reader][data-topic-reader]",
+      );
+      if (reader?.dataset.courseReader && reader.dataset.topicReader)
+        void saveReaderPosition(
+          reader.dataset.courseReader,
+          captureReaderPosition(reader.dataset.topicReader),
+        ).catch(() => {});
       setRoute(routeFromHash());
       setDrawer(false);
-      window.scrollTo(0, 0);
     };
     addEventListener("hashchange", handler);
     return () => removeEventListener("hashchange", handler);
   }, []);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [route.page, route.id]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -240,45 +443,61 @@ export default function App() {
     return () => removeEventListener("keydown", handler);
   }, []);
   useEffect(() => {
-    localStorage.setItem("workbench.quick-draft", JSON.stringify(composer));
-  }, [composer]);
-  useEffect(() => {
     localStorage.setItem("workbench.font-size", String(fontSize));
     document.documentElement.style.setProperty(
       "--reader-size",
       `${fontSize}px`,
     );
   }, [fontSize]);
-  useEffect(() => {
-    if (route.page === "topic")
-      setComposer((c) => (c.text ? c : { ...c, relationId: route.id || "" }));
-    else if (route.page === "card")
-      setComposer((c) => (c.text ? c : { ...c, relationId: route.id || "" }));
-  }, [route.page, route.id]);
+  const openQuick = () => {
+    const current = composerRef.current;
+    if (!current.text && !current.relationDismissed) {
+      const related =
+        ["topic", "card", "course"].includes(route.page) && route.id;
+      const title = related
+        ? document.querySelector("#main h1")?.textContent?.trim() ||
+          pageLabel(route.page)
+        : "";
+      setComposer({
+        ...current,
+        relationId: related ? route.id! : "",
+        relationLabel: title,
+        relationDismissed: false,
+        requestId: requestId(),
+      });
+    }
+    setComposerOpen(true);
+  };
   const notify = (message: string) => {
     setNotice(message);
     setTimeout(() => setNotice(""), 4500);
   };
   const refreshed = () => setChange((n) => n + 1);
   const saveQuick = async () => {
-    if (!composer.text.trim()) return;
+    const submitted = composerRef.current;
+    if (!submitted.text.trim() || quickSaving.current) return;
+    quickSaving.current = true;
+    setQuickBusy(true);
     setComposerState("saving");
     setComposerError("");
     try {
       await rpc("create_note", {
-        original_text: composer.text.trim(),
-        type: composer.type,
-        relation_ids: composer.relationId ? [composer.relationId] : [],
-        client_request_id: composer.requestId,
+        original_text: submitted.text.trim(),
+        type: submitted.type,
+        relation_ids: submitted.relationId ? [submitted.relationId] : [],
+        client_request_id: submitted.requestId,
       });
-      setComposerState("saved");
-      setComposer(emptyComposer());
-      setComposerOpen(false);
+      const cleared = clearComposer(submitted);
+      setComposerState(cleared ? "saved" : "idle");
+      if (cleared) setComposerOpen(false);
       refreshed();
-      notify("记录已保存");
+      notify(cleared ? "记录已保存" : "上一版已保存，新输入仍留在草稿中");
     } catch (e) {
       setComposerState("failed");
       setComposerError(messageOf(e));
+    } finally {
+      quickSaving.current = false;
+      setQuickBusy(false);
     }
   };
   const activeMain = ["courses", "course", "topic"].includes(route.page)
@@ -300,7 +519,11 @@ export default function App() {
       >
         跳到正文
       </a>
-      <aside className={`sidebar ${drawer ? "is-open" : ""}`}>
+      <aside
+        ref={sidebarRef}
+        inert={narrow && !drawer}
+        className={`sidebar ${drawer ? "is-open" : ""}`}
+      >
         <div
           className="brand"
           onClick={() => go("courses")}
@@ -359,9 +582,10 @@ export default function App() {
           onClick={() => setDrawer(false)}
         />
       )}
-      <div className="workspace">
+      <div className="workspace" inert={narrow && drawer}>
         <header className="topbar">
           <button
+            ref={menuRef}
             className="mobile-menu"
             onClick={() => setDrawer(true)}
             aria-label="打开菜单"
@@ -391,7 +615,7 @@ export default function App() {
               ⌕
             </button>
           </form>
-          <button className="top-action" onClick={() => setComposerOpen(true)}>
+          <button className="top-action" onClick={openQuick}>
             ＋ <span>记一句</span>
           </button>
         </header>
@@ -408,7 +632,7 @@ export default function App() {
               key={`${route.id}-${change}`}
               id={route.id}
               notify={notify}
-              openComposer={() => setComposerOpen(true)}
+              openComposer={openQuick}
             />
           )}
           {route.page === "knowledge" && <Knowledge key={change} />}
@@ -417,12 +641,18 @@ export default function App() {
               key={`${route.id}-${change}`}
               id={route.id}
               notify={notify}
-              openComposer={() => setComposerOpen(true)}
+              openComposer={openQuick}
             />
           )}
           {route.page === "notes" && <Notes key={change} />}
           {route.page === "note" && route.id && (
             <NotePage key={route.id} id={route.id} notify={notify} />
+          )}
+          {route.page === "case" && route.id && (
+            <CasePage key={route.id} id={route.id} />
+          )}
+          {route.page === "review" && route.id && (
+            <ReviewPage key={route.id} id={route.id} />
           )}
           {route.page === "drafts" && <Drafts notify={notify} />}
           {route.page === "draft" && route.id && (
@@ -471,10 +701,12 @@ export default function App() {
           }}
         >
           <section
+            ref={composerDialogRef}
             className="modal compose-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="compose-title"
+            tabIndex={-1}
           >
             <div className="modal-top">
               <span className="eyebrow">随手记</span>
@@ -495,7 +727,6 @@ export default function App() {
             </label>
             <textarea
               id="quick-text"
-              autoFocus
               rows={6}
               value={composer.text}
               onChange={(e) => {
@@ -536,12 +767,14 @@ export default function App() {
                     setComposer({
                       ...composer,
                       relationId: "",
+                      relationLabel: "",
+                      relationDismissed: true,
                       requestId: requestId(),
                     })
                   }
                   title="移除自动关联"
                 >
-                  关联当前内容 ×
+                  关联：{composer.relationLabel || "当前内容"} ×
                 </button>
               )}
             </div>
@@ -574,7 +807,7 @@ export default function App() {
                 <button
                   className="primary"
                   onClick={saveQuick}
-                  disabled={!composer.text.trim() || composerState === "saving"}
+                  disabled={!composer.text.trim() || quickBusy}
                 >
                   {composerState === "failed" ? "重试保存" : "保存记录"}
                 </button>
@@ -634,25 +867,61 @@ function PageHead({
 function Courses({ notify }: { notify: (s: string) => void }) {
   const [query, setQuery] = useState("");
   const [series, setSeries] = useState("");
-  const { data, error, loading, refresh } = useRemote<{
-    items: Course[];
-    series: string[];
-  }>("list_courses", { query, series }, []);
-  const recent = useMemo(
-    () =>
-      (data?.items || [])
-        .filter(
-          (c) =>
-            c.learning_state?.position?.topic_id ||
-            c.learning_state?.status === "reading",
-        )
-        .sort((a, b) =>
-          (b.learning_state?.updated_at || "").localeCompare(
-            a.learning_state?.updated_at || "",
-          ),
-        )[0],
-    [data],
-  );
+  const { items, cursor, total, meta, error, loading, refresh, more } =
+    usePagedRpc<Course>("list_courses", { query, series, limit: 30 });
+  const recent = useMemo(() => {
+    const loaded = items
+      .filter(
+        (c) =>
+          chooseReaderPosition(c.id, c.learning_state)?.topic_id ||
+          c.learning_state?.status === "reading",
+      )
+      .sort((a, b) => {
+        const last = (course: Course) => {
+          let local = 0;
+          try {
+            local =
+              JSON.parse(
+                localStorage.getItem(`workbench.reader.${course.id}`) || "null",
+              )?.saved_at || 0;
+          } catch {}
+          return Math.max(
+            local,
+            Date.parse(course.learning_state?.updated_at || "") || 0,
+          );
+        };
+        return last(b) - last(a);
+      })[0];
+    let last: {
+      id: string;
+      title: string;
+      series: string;
+      course_date?: string | null;
+      topic_id: string;
+      updated_at: number;
+    } | null = null;
+    try {
+      last = JSON.parse(
+        localStorage.getItem("workbench.last-course") || "null",
+      );
+    } catch {}
+    const loadedAt = Math.max(
+      0,
+      Date.parse(loaded?.learning_state?.updated_at || "") || 0,
+    );
+    return last?.topic_id && last.updated_at > loadedAt
+      ? ({
+          id: last.id,
+          title: last.title,
+          series: last.series,
+          course_date: last.course_date || null,
+          learning_state: {
+            position: { topic_id: last.topic_id },
+            updated_at: new Date(last.updated_at).toISOString(),
+          },
+        } as Course)
+      : loaded;
+  }, [items]);
   return (
     <>
       <PageHead
@@ -673,8 +942,8 @@ function Courses({ notify }: { notify: (s: string) => void }) {
             className="primary"
             onClick={() =>
               go(
-                recent.learning_state?.position?.topic_id
-                  ? `topic/${recent.learning_state.position.topic_id}`
+                chooseReaderPosition(recent.id, recent.learning_state)?.topic_id
+                  ? `topic/${chooseReaderPosition(recent.id, recent.learning_state)!.topic_id}`
                   : `course/${recent.id}`,
               )
             }
@@ -685,7 +954,11 @@ function Courses({ notify }: { notify: (s: string) => void }) {
       )}
       <div className="section-heading">
         <h2>全部课程</h2>
-        <span>{data?.items.length ?? 0} 门</span>
+        <span>
+          {total === null
+            ? `${items.length} 门`
+            : `已显示 ${items.length} / ${total} 门`}
+        </span>
       </div>
       <div className="filters">
         <label className="sr-only" htmlFor="course-query">
@@ -706,7 +979,7 @@ function Courses({ notify }: { notify: (s: string) => void }) {
           onChange={(e) => setSeries(e.target.value)}
         >
           <option value="">全部系列</option>
-          {(data?.series || []).map((s) => (
+          {((meta.series || []) as string[]).map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -715,11 +988,11 @@ function Courses({ notify }: { notify: (s: string) => void }) {
       </div>
       {error && <ErrorBox error={error} retry={refresh} />}{" "}
       {loading && <p className="muted">正在读取课程…</p>}
-      {!loading && !error && !data?.items.length && (
+      {!loading && !error && !items.length && (
         <Empty>这里还没有符合条件的课程。可以从“导入资料”加入来源。</Empty>
       )}
       <div className="course-list">
-        {data?.items.map((course) => (
+        {items.map((course) => (
           <button
             className="course-row"
             key={course.id}
@@ -744,6 +1017,11 @@ function Courses({ notify }: { notify: (s: string) => void }) {
           </button>
         ))}
       </div>
+      {cursor && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          {loading ? "正在读取…" : "加载更多课程"}
+        </button>
+      )}
     </>
   );
 }
@@ -785,6 +1063,7 @@ function CoursePage({
   const topics = (course.topics || [])
     .slice()
     .sort((a, b) => a.order - b.order);
+  const resume = chooseReaderPosition(course.id, course.learning_state);
   return (
     <>
       <button className="back" onClick={() => go("courses")}>
@@ -801,6 +1080,23 @@ function CoursePage({
           </div>
         }
       />
+      {resume?.topic_id &&
+        topics.some((topic) => topic.id === resume.topic_id) && (
+          <div className="continue">
+            <div>
+              <span className="eyebrow">上次读到</span>
+              <h2>
+                {topics.find((topic) => topic.id === resume.topic_id)?.title}
+              </h2>
+            </div>
+            <button
+              className="primary"
+              onClick={() => go(`topic/${resume.topic_id}`)}
+            >
+              继续阅读 →
+            </button>
+          </div>
+        )}
       {course.pending_drafts?.length ? (
         <div className="pending-course-drafts">
           <div>
@@ -927,6 +1223,12 @@ function TopicPage({
     loading,
     refresh,
   } = useRemote<Topic>("get_topic", { topic_id: id }, []);
+  const courseOutline = useRemote<Course>(
+    "get_course",
+    { course_id: topic?.course_id || "" },
+    [topic?.course_id],
+    !!topic?.course_id,
+  );
   const [activeRef, setActiveRef] = useState<SourceRef | null>(null);
   const [busy, setBusy] = useState(false);
   const [scrollState, setScrollState] = useState<LearningState | null>(null);
@@ -934,31 +1236,65 @@ function TopicPage({
     if (topic) setScrollState(topic.learning_state || null);
   }, [topic]);
   useEffect(() => {
-    if (!topic) return;
-    const position = topic.course?.learning_state?.position;
-    if (position?.topic_id === topic.id && position.scroll) {
-      const timer = setTimeout(
-        () => window.scrollTo({ top: position.scroll, behavior: "instant" }),
-        80,
+    if (topic?.course)
+      localStorage.setItem(
+        "workbench.last-course",
+        JSON.stringify({
+          id: topic.course_id,
+          title: topic.course.title,
+          series: topic.course.series,
+          course_date: topic.course.course_date,
+          topic_id: topic.id,
+          updated_at: Date.now(),
+        }),
       );
-      return () => clearTimeout(timer);
-    }
   }, [topic?.id]);
   useEffect(() => {
     if (!topic) return;
+    let restored = false;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const persist = () =>
+      saveReaderPosition(
+        topic.course_id,
+        captureReaderPosition(topic.id),
+      ).catch(() => {});
+    const restore = setTimeout(() => {
+      restoreReaderPosition(
+        chooseReaderPosition(topic.course_id, topic.course?.learning_state),
+        topic.id,
+      );
+      restored = true;
+      persist(); // Even a short topic is now the last reading position.
+    }, 80);
     const onScroll = () => {
-      clearTimeout((onScroll as any).timer);
-      (onScroll as any).timer = setTimeout(() => {
-        rpc("set_learning_state", {
-          object_id: topic.course_id,
-          position: { topic_id: topic.id, scroll: window.scrollY },
-        }).catch(() => {});
-      }, 900);
+      if (!restored) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(persist, 400);
     };
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") persist();
+    };
+    const onPageHide = () =>
+      saveReaderOnPageHide(topic.course_id, captureReaderPosition(topic.id));
     addEventListener("scroll", onScroll, { passive: true });
+    addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onHidden);
     return () => {
       removeEventListener("scroll", onScroll);
-      clearTimeout((onScroll as any).timer);
+      removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onHidden);
+      clearTimeout(restore);
+      clearTimeout(debounce);
+      // hashchange already captured the pre-navigation scroll. A parent scroll-to-top
+      // may run before this cleanup, so never recapture after leaving this route.
+      if (location.hash === `#topic/${topic.id}`) {
+        if (restored) persist();
+        else
+          saveReaderPosition(topic.course_id, {
+            topic_id: topic.id,
+            scroll: 0,
+          }).catch(() => {});
+      }
     };
   }, [topic?.id]);
   const setState = async (status: string) => {
@@ -981,6 +1317,13 @@ function TopicPage({
   if (error) return <ErrorBox error={error} retry={refresh} />;
   if (loading || !topic) return <p className="muted">正在读取主题…</p>;
   const refs = topic.blocks.flatMap((b) => b.source_refs || []);
+  const orderedTopics = (courseOutline.data?.topics || [])
+    .slice()
+    .sort((a, b) => a.order - b.order);
+  const currentIndex = orderedTopics.findIndex((item) => item.id === topic.id);
+  const previousTopic =
+    currentIndex > 0 ? orderedTopics[currentIndex - 1] : null;
+  const nextTopic = currentIndex >= 0 ? orderedTopics[currentIndex + 1] : null;
   return (
     <>
       <button className="back" onClick={() => go(`course/${topic.course_id}`)}>
@@ -991,25 +1334,58 @@ function TopicPage({
         title={topic.title}
         description={topic.course?.title}
       />
+      <details className="inline-topic-map">
+        <summary>
+          本课主题目录 ·{" "}
+          {currentIndex >= 0
+            ? `${currentIndex + 1} / ${orderedTopics.length}`
+            : "当前位置"}
+        </summary>
+        {courseOutline.error && (
+          <ErrorBox error={courseOutline.error} retry={courseOutline.refresh} />
+        )}
+        <ol>
+          {orderedTopics.map((item) => (
+            <li key={item.id}>
+              <button
+                className={item.id === topic.id ? "current" : ""}
+                aria-current={item.id === topic.id ? "page" : undefined}
+                onClick={() => go(`topic/${item.id}`)}
+              >
+                {item.parent_id ? "↳ " : ""}
+                {item.title}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </details>
       <div className="reading-layout">
-        <article className="reading-paper">
+        <article
+          className="reading-paper"
+          data-course-reader={topic.course_id}
+          data-topic-reader={topic.id}
+        >
           <div className="reading-meta">
             <Pill>{topic.content_kind}</Pill>
             <span>资料整理层</span>
           </div>
           {topic.blocks.length ? (
             topic.blocks.map((block) => (
-              <section className="teaching-block" key={block.id}>
-                <div className="block-label">
-                  {blockType(block.type)}{" "}
-                  <span>· {humanLabel(block.origin_kind || "整理内容")}</span>
+              <section
+                className="teaching-block"
+                key={block.id}
+                data-reader-block={block.id}
+              >
+                <div className="block-label">{blockType(block.type)}</div>
+                <div
+                  className="content-provenance"
+                  aria-label="内容出处和核验状态"
+                >
+                  <Pill>{`来源：${humanLabel(block.origin_kind || "整理内容")}`}</Pill>
+                  <Pill>{`加工：${humanLabel(block.transformation || "未说明加工方式")}`}</Pill>
+                  <Pill>{`核验：${humanLabel(block.verification_status || "needs_review")}`}</Pill>
                 </div>
                 <Markdown>{block.body_md}</Markdown>
-                {block.verification_status && (
-                  <span className="verification">
-                    {humanLabel(block.verification_status)}
-                  </span>
-                )}
                 {block.source_refs?.length > 0 && (
                   <div className="block-sources">
                     {block.source_refs.map((ref, i) => (
@@ -1099,6 +1475,24 @@ function TopicPage({
           </div>
         </aside>
       </div>
+      <nav className="reader-neighbors" aria-label="相邻主题">
+        {previousTopic ? (
+          <button onClick={() => go(`topic/${previousTopic.id}`)}>
+            ← 上一主题 <strong>{previousTopic.title}</strong>
+          </button>
+        ) : (
+          <span />
+        )}
+        {nextTopic ? (
+          <button onClick={() => go(`topic/${nextTopic.id}`)}>
+            下一主题 → <strong>{nextTopic.title}</strong>
+          </button>
+        ) : (
+          <button onClick={() => go(`course/${topic.course_id}`)}>
+            已到本课末尾 · 返回课程地图 ↗
+          </button>
+        )}
+      </nav>
       {activeRef && (
         <SourceDialog refData={activeRef} close={() => setActiveRef(null)} />
       )}
@@ -1130,13 +1524,7 @@ function SourceDialog({
   refData: SourceRef;
   close: () => void;
 }) {
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    addEventListener("keydown", handler);
-    return () => removeEventListener("keydown", handler);
-  }, [close]);
+  const dialogRef = useDialogFocus(true, close);
   return (
     <div
       className="modal-backdrop"
@@ -1145,19 +1533,16 @@ function SourceDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="modal source-modal"
         role="dialog"
         aria-modal="true"
         aria-label="来源原文"
+        tabIndex={-1}
       >
         <div className="modal-top">
           <span className="eyebrow">原文核对 · 固定来源版本</span>
-          <button
-            className="icon-button"
-            autoFocus
-            onClick={close}
-            aria-label="关闭原文"
-          >
+          <button className="icon-button" onClick={close} aria-label="关闭原文">
             ×
           </button>
         </div>
@@ -1279,11 +1664,8 @@ function SourceReader({ refData }: { refData: SourceRef }) {
 function Knowledge() {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
-  const { data, error, loading, refresh } = useRemote<{ items: Card[] }>(
-    "list_knowledge",
-    { query, type },
-    [],
-  );
+  const { items, cursor, total, error, loading, refresh, more } =
+    usePagedRpc<Card>("list_knowledge", { query, type, limit: 30 });
   return (
     <>
       <PageHead
@@ -1312,11 +1694,9 @@ function Knowledge() {
       </div>
       {error && <ErrorBox error={error} retry={refresh} />}{" "}
       {loading && <p className="muted">正在读取知识卡…</p>}
-      {!loading && !error && !data?.items.length && (
-        <Empty>尚无匹配的知识卡。</Empty>
-      )}
+      {!loading && !error && !items.length && <Empty>尚无匹配的知识卡。</Empty>}
       <div className="card-grid">
-        {data?.items.map((card) => (
+        {items.map((card) => (
           <button
             key={card.id}
             className="knowledge-card"
@@ -1339,6 +1719,16 @@ function Knowledge() {
           </button>
         ))}
       </div>
+      {total !== null && (
+        <p className="small-muted">
+          已显示 {items.length} / {total} 张知识卡
+        </p>
+      )}
+      {cursor && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          {loading ? "正在读取…" : "加载更多知识卡"}
+        </button>
+      )}
     </>
   );
 }
@@ -1447,10 +1837,16 @@ const noteTypes: Record<string, string> = {
 function Notes() {
   const [type, setType] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
-  const { data, error, loading, refresh } = useRemote<{
-    items: Note[];
-    next_cursor: string | null;
-  }>("list_notes", { type, limit: 100, include_archived: includeArchived }, []);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const { items, cursor, total, error, loading, refresh, more } =
+    usePagedRpc<Note>("list_notes", {
+      type: type || undefined,
+      from: from || undefined,
+      to: to || undefined,
+      limit: 40,
+      include_archived: includeArchived,
+    });
   return (
     <>
       <PageHead
@@ -1479,14 +1875,30 @@ function Notes() {
           />
           含已归档
         </label>
+        <label>
+          开始日期{" "}
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+        </label>
+        <label>
+          结束日期{" "}
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </label>
       </div>
       {error && <ErrorBox error={error} retry={refresh} />}{" "}
       {loading && <p className="muted">正在读取记录…</p>}
-      {!loading && !error && !data?.items.length && (
+      {!loading && !error && !items.length && (
         <Empty>目前还没有记录。随时点右上角“记一句”开始。</Empty>
       )}
       <div className="timeline">
-        {data?.items.map((note) => (
+        {items.map((note) => (
           <button
             className="timeline-item"
             onClick={() => go(`note/${note.id}`)}
@@ -1497,6 +1909,7 @@ function Notes() {
               <small>
                 {noteTypes[note.type] || note.type} · 私人
                 {note.archived ? " · 已归档" : ""}
+                {note.content_truncated ? " · 摘录，点开看全文" : ""}
               </small>
               <strong>{note.original_text}</strong>
               <span>查看原话与后续 ↗</span>
@@ -1504,8 +1917,15 @@ function Notes() {
           </button>
         ))}
       </div>
-      {data?.next_cursor && (
-        <p className="small-muted">还有较早记录；可以通过搜索查找。</p>
+      {total !== null && (
+        <p className="small-muted">
+          已显示 {items.length} / {total} 条记录
+        </p>
+      )}
+      {cursor && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          {loading ? "正在读取…" : "加载更早记录"}
+        </button>
       )}
     </>
   );
@@ -1517,64 +1937,141 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     loading,
     refresh,
   } = useRemote<Note>("get_note", { note_id: id }, []);
-  const [feedback, setFeedback] = useState(() =>
-    localDraft(`workbench.feedback.${id}`, {
-      text: "",
-      requestId: requestId(),
-    }),
-  );
-  const [review, setReview] = useState(() =>
-    localDraft(`workbench.review.${id}`, {
-      text: "",
-      method: "",
-      requestId: requestId(),
-    }),
-  );
+  const {
+    draft: feedback,
+    update: setFeedback,
+    current: feedbackRef,
+    clearSubmitted: clearFeedback,
+  } = usePersistentDraft(`workbench.feedback.${id}`, () => ({
+    text: "",
+    requestId: requestId(),
+  }));
+  const {
+    draft: review,
+    update: setReview,
+    current: reviewRef,
+    clearSubmitted: clearReview,
+  } = usePersistentDraft(`workbench.review.${id}`, () => ({
+    text: "",
+    method: "",
+    version: "",
+    gaps: "",
+    requestId: requestId(),
+  }));
   const [busy, setBusy] = useState("");
+  const busyRef = useRef(false);
   const [writeError, setWriteError] = useState("");
-  useEffect(() => {
-    localStorage.setItem(`workbench.feedback.${id}`, JSON.stringify(feedback));
-  }, [id, feedback]);
-  useEffect(() => {
-    localStorage.setItem(`workbench.review.${id}`, JSON.stringify(review));
-  }, [id, review]);
+  const [failedAction, setFailedAction] = useState<
+    "feedback" | "review" | null
+  >(null);
+  const [selectedRelated, setSelectedRelated] = useState<string[]>([]);
+  const [relatedQuery, setRelatedQuery] = useState("");
+  const relatedList = usePagedRpc<Note>("list_notes", { limit: 30 });
+  const relatedSearch = usePagedRpc<{
+    id: string;
+    title: string;
+    snippet: string;
+  }>(
+    "search_library",
+    { query: relatedQuery, types: ["note"], limit: 30 },
+    !!relatedQuery.trim(),
+  );
+  const relatedOptions = relatedQuery.trim() ? relatedSearch : relatedList;
+  const [includeSources, setIncludeSources] = useState(false);
+  const [handoff, setHandoff] = useState<any>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
+  const makeHandoff = async () => {
+    setHandoffBusy(true);
+    setHandoffError("");
+    setHandoff(null);
+    try {
+      setHandoff(
+        await rpc("get_review_handoff", {
+          note_id: id,
+          related_note_ids: selectedRelated,
+          include_sources: includeSources,
+        }),
+      );
+    } catch (e) {
+      setHandoffError(messageOf(e));
+    } finally {
+      setHandoffBusy(false);
+    }
+  };
+  const handoffText = handoff
+    ? [
+        "# 个人复盘交接（请先阅读边界）",
+        "以下是用户选定的原始记录。请保留原话，不假设缺失的方法或个人动机；不具备完整方法资料时只作一般整理。复盘结果请由用户检查后独立归档。",
+        `\n## 当前记录 ${handoff.note?.id || id}\n${handoff.note?.original_text || ""}`,
+        ...(handoff.related_notes || []).map(
+          (item: Note) => `\n## 选定相关记录 ${item.id}\n${item.original_text}`,
+        ),
+        ...(handoff.source_excerpts || []).map(
+          (item: any) =>
+            `\n## 来源 ${item.source_name || "原文"} ${item.title_path || ""}\n${item.text || ""}`,
+        ),
+        `\n## 资料缺口\n${(handoff.gaps || []).length ? handoff.gaps.map((gap: string) => `- ${gap}`).join("\n") : "- 无额外缺口说明"}`,
+        `\n方法资料可用：${handoff.capabilities?.method_context_available ? "是" : "否。请勿声称完整使用该方法。"}`,
+      ].join("\n")
+    : "";
   const saveFeedback = async () => {
-    if (!feedback.text.trim()) return;
+    const submitted = feedbackRef.current;
+    if (!submitted.text.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy("feedback");
     setWriteError("");
     try {
       await rpc("create_note", {
-        original_text: feedback.text.trim(),
+        original_text: submitted.text.trim(),
         type: "feedback",
         parent_note_id: id,
-        client_request_id: feedback.requestId,
+        client_request_id: submitted.requestId,
       });
-      setFeedback({ text: "", requestId: requestId() });
+      const cleared = clearFeedback(submitted);
       refresh();
-      notify("后续反馈已保存");
+      notify(
+        cleared ? "后续反馈已保存" : "上一版反馈已保存，新输入仍留在草稿中",
+      );
     } catch (e) {
+      setFailedAction("feedback");
       setWriteError(messageOf(e));
     } finally {
+      busyRef.current = false;
       setBusy("");
     }
   };
   const saveReview = async () => {
-    if (!review.text.trim()) return;
+    const submitted = reviewRef.current;
+    if (!submitted.text.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy("review");
     setWriteError("");
     try {
       await rpc("save_review_result", {
         note_ids: [id],
-        body_md: review.text.trim(),
-        method_name: review.method.trim() || undefined,
-        client_request_id: review.requestId,
+        body_md: submitted.text.trim(),
+        method_name: submitted.method.trim() || undefined,
+        method_version: submitted.version?.trim() || undefined,
+        gaps:
+          submitted.gaps
+            ?.split(/\n/)
+            .map((s: string) => s.trim())
+            .filter(Boolean) || [],
+        client_request_id: submitted.requestId,
       });
-      setReview({ text: "", method: "", requestId: requestId() });
+      const cleared = clearReview(submitted);
       refresh();
-      notify("外部复盘结果已归档，原始记录仍保留");
+      notify(
+        cleared
+          ? "外部复盘结果已归档，原始记录仍保留"
+          : "上一版复盘已归档，新输入仍留在草稿中",
+      );
     } catch (e) {
+      setFailedAction("review");
       setWriteError(messageOf(e));
     } finally {
+      busyRef.current = false;
       setBusy("");
     }
   };
@@ -1615,18 +2112,32 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             仅自己可见 · {new Date(note.created_at).toLocaleString("zh-CN")}
           </span>
         </section>
-        {note.relations?.length ? (
+        {note.resolved_relations?.length || note.relations?.length ? (
           <section className="paper-block">
             <h2>关联资料</h2>
             <div className="relation-list">
-              {note.relations.map((r) => (
-                <div key={r.id}>
+              {note.resolved_relations?.map((relation) => (
+                <button
+                  className="aside-link"
+                  key={relation.id}
+                  onClick={() => go(relation.web_path.replace(/^\/#/, ""))}
+                >
                   <span>
-                    {r.kind || "关联"}：{r.to_id || r.from_id}
+                    {humanLabel(relation.type)} · {relation.title}
                   </span>
-                  <span>{humanLabel(r.status || "pending")}</span>
-                </div>
+                  <span>打开 ↗</span>
+                </button>
               ))}
+              {note.relations
+                ?.filter((r) => r.status === "pending")
+                .map((r) => (
+                  <div key={r.id}>
+                    <span>
+                      {r.kind || "关联"}：{r.to_id || r.from_id}
+                    </span>
+                    <span>待确认</span>
+                  </div>
+                ))}
             </div>
           </section>
         ) : null}
@@ -1634,6 +2145,130 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
           <h2>后续时间线</h2>
           <span>保留变化，不覆盖当时的自己</span>
         </div>
+        <section className="entry-panel handoff-panel">
+          <h2>把这条记录交给我的 Agent</h2>
+          <p className="muted">
+            先选上下文并预览，再复制给您实际使用的
+            Agent。工作台不会自动发送，也不会替代 Agent 的方法资料。
+          </p>
+          <fieldset>
+            <legend>选择相关记录（最多 10 条，可留空）</legend>
+            <input
+              aria-label="查找相关记录"
+              value={relatedQuery}
+              onChange={(e) => setRelatedQuery(e.target.value)}
+              placeholder="搜索原话，或从最近记录中选择"
+            />
+            <div className="handoff-options">
+              {relatedOptions.items
+                .filter((item) => item.id !== id)
+                .map((item) => (
+                  <label className="check-row" key={item.id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRelated.includes(item.id)}
+                      disabled={
+                        !selectedRelated.includes(item.id) &&
+                        selectedRelated.length >= 10
+                      }
+                      onChange={(e) => {
+                        setHandoff(null);
+                        setSelectedRelated((current) =>
+                          e.target.checked
+                            ? [...current, item.id]
+                            : current.filter((value) => value !== item.id),
+                        );
+                      }}
+                    />
+                    {("original_text" in item
+                      ? item.original_text
+                      : item.title
+                    ).slice(0, 120)}
+                  </label>
+                ))}
+            </div>
+            {relatedOptions.cursor && (
+              <button
+                className="text-button"
+                disabled={relatedOptions.loading}
+                onClick={relatedOptions.more}
+              >
+                加载更早记录
+              </button>
+            )}
+            {relatedOptions.error && (
+              <ErrorBox
+                error={relatedOptions.error}
+                retry={relatedOptions.refresh}
+              />
+            )}
+            <p className="small-muted">
+              已选 {selectedRelated.length} 条；只会附上你勾选的记录。
+            </p>
+          </fieldset>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={includeSources}
+              onChange={(e) => {
+                setHandoff(null);
+                setIncludeSources(e.target.checked);
+              }}
+            />
+            附上可定位的来源原文
+          </label>
+          <button
+            className="secondary"
+            disabled={handoffBusy}
+            onClick={makeHandoff}
+          >
+            {handoffBusy ? "正在准备…" : "预览交接内容"}
+          </button>
+          {handoffError && (
+            <ErrorBox error={handoffError} retry={makeHandoff} />
+          )}
+          {handoff && (
+            <div className="preview-box">
+              <h3>发送前核对</h3>
+              <p className="small-muted">
+                当前记录 1 条 · 选定相关记录{" "}
+                {handoff.related_notes?.length || 0} 条 · 来源片段{" "}
+                {handoff.source_excerpts?.length || 0} 段
+              </p>
+              <pre className="handoff-preview">{handoffText}</pre>
+              <div className="review-actions">
+                <button
+                  className="primary"
+                  onClick={() =>
+                    navigator.clipboard.writeText(handoffText).then(
+                      () => notify("交接内容已复制，请在 Agent 中粘贴并核对"),
+                      () => notify("复制未成功，可下载交接文件"),
+                    )
+                  }
+                >
+                  复制交接内容
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    const url = URL.createObjectURL(
+                      new Blob([handoffText], {
+                        type: "text/markdown;charset=utf-8",
+                      }),
+                    );
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `复盘交接-${id}.md`;
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }}
+                >
+                  下载交接文件
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
         {!note.reviews?.length && !note.followups?.length && (
           <Empty>目前还没有后续。稍后回来也来得及。</Empty>
         )}
@@ -1696,7 +2331,7 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
           </div>
         </section>
         <section className="entry-panel">
-          <h2>保存外部复盘</h2>
+          <h2>保存这次复盘</h2>
           <p className="muted">
             粘贴 Agent
             返回的结果。它会作为独立版本保存，原话不会被替换。若未使用完整方法，请不要填写其名称。
@@ -1714,6 +2349,40 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             placeholder="方法名称（可留空）"
             aria-label="复盘方法名称"
           />
+          <input
+            value={review.version || ""}
+            onChange={(e) => {
+              setReview({
+                ...review,
+                version: e.target.value,
+                requestId: requestId(),
+              });
+              setWriteError("");
+            }}
+            placeholder="方法版本（可留空）"
+            aria-label="复盘方法版本"
+          />
+          <label className="field">
+            从 Agent 返回文件载入文字（可选）
+            <input
+              type="file"
+              accept=".md,.txt,text/plain,text/markdown"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 1024 * 1024) {
+                  setWriteError("文件超过 1 MB，请改为粘贴需要归档的文字。");
+                  return;
+                }
+                const text = await file.text();
+                setReview((current) => ({
+                  ...current,
+                  text,
+                  requestId: requestId(),
+                }));
+              }}
+            />
+          </label>
           <textarea
             rows={8}
             value={review.text}
@@ -1727,20 +2396,42 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             }}
             placeholder="粘贴外部复盘结果（Markdown 可用）"
           />
+          <textarea
+            rows={3}
+            value={review.gaps || ""}
+            onChange={(e) => {
+              setReview({
+                ...review,
+                gaps: e.target.value,
+                requestId: requestId(),
+              });
+              setWriteError("");
+            }}
+            placeholder="资料缺口或待核问题，每行一项（可留空）"
+            aria-label="资料缺口或待核问题"
+          />
           <div className="entry-action">
             <button
               className="primary"
               disabled={busy !== "" || !review.text.trim()}
               onClick={saveReview}
             >
-              归档复盘结果
+              保存这次复盘
             </button>
           </div>
         </section>
         {writeError && (
           <ErrorBox
             error={`保存失败，内容已留在本机。${writeError}`}
-            retry={busy ? undefined : feedback.text ? saveFeedback : saveReview}
+            retry={
+              busy
+                ? undefined
+                : failedAction === "feedback"
+                  ? saveFeedback
+                  : failedAction === "review"
+                    ? saveReview
+                    : undefined
+            }
           />
         )}
         <button className="text-button subdued" onClick={archive}>
@@ -1752,15 +2443,11 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
 }
 
 function Drafts({ notify }: { notify: (s: string) => void }) {
-  const { data, error, loading, refresh } = useRemote<{ items: Draft[] }>(
-    "list_drafts",
-    {},
-    [],
-  );
-  const relations = useRemote<{ items: Relation[] }>("list_relations", {}, []);
+  const { items, cursor, total, error, loading, refresh, more } =
+    usePagedRpc<Draft>("list_drafts", { limit: 30 });
+  const relations = usePagedRpc<Relation>("list_relations", { limit: 30 });
   const [busy, setBusy] = useState("");
-  const pending =
-    relations.data?.items.filter((r) => r.status === "pending") || [];
+  const pending = relations.items.filter((r) => r.status === "pending");
   const reviewRelation = async (
     id: string,
     status: "confirmed" | "rejected",
@@ -1785,11 +2472,11 @@ function Drafts({ notify }: { notify: (s: string) => void }) {
       />
       {error && <ErrorBox error={error} retry={refresh} />}{" "}
       {loading && <p className="muted">正在读取草稿…</p>}
-      {!loading && !error && !data?.items.length && (
+      {!loading && !error && !items.length && (
         <Empty>目前没有课程或知识卡草稿。</Empty>
       )}
       <div className="draft-list">
-        {data?.items.map((d) => (
+        {items.map((d) => (
           <button
             key={d.id}
             className="draft-row"
@@ -1806,10 +2493,22 @@ function Drafts({ notify }: { notify: (s: string) => void }) {
           </button>
         ))}
       </div>
+      {total !== null && (
+        <p className="small-muted">
+          已显示 {items.length} / {total} 份草稿
+        </p>
+      )}
+      {cursor && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          加载更多草稿
+        </button>
+      )}
       <section className="relations-review">
         <div className="section-heading">
           <h2>待确认关联</h2>
-          <span>{pending.length} 条</span>
+          <span>
+            {pending.length} 条{relations.cursor ? " · 后续页面可能还有" : ""}
+          </span>
         </div>
         <p className="muted">Agent 提议的资料关联由你决定是否收录。</p>
         {relations.error && (
@@ -1847,6 +2546,15 @@ function Drafts({ notify }: { notify: (s: string) => void }) {
             </div>
           </div>
         ))}
+        {relations.cursor && (
+          <button
+            className="secondary"
+            disabled={relations.loading}
+            onClick={relations.more}
+          >
+            加载更多关联
+          </button>
+        )}
       </section>
     </>
   );
@@ -1982,6 +2690,7 @@ function DraftPage({
       ? existing.data || draft.current
       : draft.current;
   const proposed = draft.proposed || draft.payload;
+  const changes = readableChanges(current, proposed, draft.entity_type);
   return (
     <>
       <button className="back" onClick={() => go("drafts")}>
@@ -2000,6 +2709,47 @@ function DraftPage({
           待核：{draft.validation.warnings.join("；")}
         </div>
       ) : null}
+      <section
+        className="paper-block change-summary"
+        aria-label="这次拟改变的内容"
+      >
+        <div className="section-heading">
+          <h2>这次拟改变什么</h2>
+          <span>{changes.length} 处</span>
+        </div>
+        {changes.length ? (
+          <ol>
+            {changes.map((change, i) => (
+              <li
+                key={`${change.area}-${change.title}-${i}`}
+                className={`change-${change.kind}`}
+              >
+                <span className="eyebrow">
+                  {change.kind === "added"
+                    ? "新增"
+                    : change.kind === "removed"
+                      ? "移除"
+                      : "修改"}{" "}
+                  · {change.area}
+                </span>
+                <strong>{change.title}</strong>
+                <ul>
+                  {change.details.map((detail, j) => (
+                    <li key={j}>{detail}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="muted">
+            可读字段没有发现变化，请继续核对完整内容与原文出处。
+          </p>
+        )}
+        <p className="small-muted">
+          此摘要只定位变化。采用前请核对下方两份完整正文，尤其是来源、条件、遗漏与新增案例。
+        </p>
+      </section>
       <div className="diff-grid">
         <section className="diff-pane">
           <span className="eyebrow">当前正式资料</span>
@@ -2054,17 +2804,27 @@ function DraftPage({
 
 function SearchPage({ query }: { query: string }) {
   const [text, setText] = useState(query);
-  const { data, error, loading, refresh } = useRemote<{
-    items: {
-      id: string;
-      type: string;
-      title: string;
-      snippet: string;
-      source: string;
-      web_path: string;
-    }[];
-    searched_scope?: string[];
-  }>("search_library", { query, limit: 50 }, [query], !!query.trim());
+  const [type, setType] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const { items, cursor, total, error, loading, refresh, more } = usePagedRpc<{
+    id: string;
+    type: string;
+    title: string;
+    snippet: string;
+    source: string;
+    web_path: string;
+  }>(
+    "search_library",
+    {
+      query,
+      types: type ? [type] : undefined,
+      from: from || undefined,
+      to: to || undefined,
+      limit: 40,
+    },
+    !!query.trim(),
+  );
   return (
     <>
       <PageHead
@@ -2087,15 +2847,52 @@ function SearchPage({ query }: { query: string }) {
         />
         <button className="primary">搜索</button>
       </form>
+      <div className="filters">
+        <select
+          aria-label="搜索类型"
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+        >
+          <option value="">全部类型</option>
+          {[
+            ["course", "课程"],
+            ["topic", "主题"],
+            ["card", "知识卡"],
+            ["case", "案例"],
+            ["note", "我的记录"],
+            ["review", "复盘"],
+          ].map(([key, label]) => (
+            <option value={key} key={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <label>
+          开始日期{" "}
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+        </label>
+        <label>
+          结束日期{" "}
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </label>
+      </div>
       {query && (
         <p className="small-muted">
-          “{query}”的结果 · 搜索范围：
-          {data?.searched_scope?.join("、") || "本地资料"}
+          “{query}”的结果 ·{" "}
+          {total === null ? "本地资料" : `已显示 ${items.length} / ${total} 条`}
         </p>
       )}
       {error && <ErrorBox error={error} retry={refresh} />}{" "}
       {loading && query && <p className="muted">正在检索…</p>}
-      {!loading && !error && !data?.items?.length && (
+      {!loading && !error && !items.length && (
         <Empty>
           {query
             ? "没有找到匹配结果。可换一个词或缩短查询。"
@@ -2103,7 +2900,7 @@ function SearchPage({ query }: { query: string }) {
         </Empty>
       )}
       <div className="search-results">
-        {data?.items.map((item, i) => (
+        {items.map((item, i) => (
           <button
             className="result-row"
             key={`${item.id}-${i}`}
@@ -2120,6 +2917,90 @@ function SearchPage({ query }: { query: string }) {
           </button>
         ))}
       </div>
+      {cursor && (
+        <button className="secondary" disabled={loading} onClick={more}>
+          {loading ? "正在读取…" : "加载更多结果"}
+        </button>
+      )}
+    </>
+  );
+}
+
+function CasePage({ id }: { id: string }) {
+  const { data, error, loading, refresh } = useRemote<any>(
+    "get_case",
+    { case_id: id },
+    [],
+  );
+  if (error) return <ErrorBox error={error} retry={refresh} />;
+  if (loading || !data) return <p className="muted">正在读取案例…</p>;
+  return (
+    <>
+      <button className="back" onClick={() => history.back()}>
+        ← 返回上一页
+      </button>
+      <PageHead
+        eyebrow="案例 · 原有资料"
+        title={data.title || "案例"}
+        description={data.description || "保留案例内容与出处"}
+      />
+      <article className="reading-paper">
+        <Markdown>
+          {data.body_md || data.text || data.description || "尚无正文"}
+        </Markdown>
+        {data.source_refs?.map((ref: SourceRef, i: number) => (
+          <button
+            className="text-button"
+            key={i}
+            onClick={() =>
+              go(`source/${ref.source_version_id}/${ref.source_block_id}`)
+            }
+          >
+            查看出处 {i + 1} ↗
+          </button>
+        ))}
+      </article>
+    </>
+  );
+}
+function ReviewPage({ id }: { id: string }) {
+  const { data, error, loading, refresh } = useRemote<Review>(
+    "get_review_result",
+    { review_id: id },
+    [],
+  );
+  if (error) return <ErrorBox error={error} retry={refresh} />;
+  if (loading || !data) return <p className="muted">正在读取复盘…</p>;
+  return (
+    <>
+      <button className="back" onClick={() => history.back()}>
+        ← 返回上一页
+      </button>
+      <PageHead
+        eyebrow={`复盘 · ${dateLabel(data.created_at)}`}
+        title="一次独立保存的复盘"
+        description={
+          data.method_name ? `方法：${data.method_name}` : "原始记录仍单独保留"
+        }
+      />
+      <article className="reading-paper">
+        <Markdown>{data.body_md}</Markdown>
+        <div className="aside-title">对应原始记录</div>
+        {data.note_ids.map((noteId) => (
+          <button
+            className="aside-link"
+            key={noteId}
+            onClick={() => go(`note/${noteId}`)}
+          >
+            打开原始记录 ↗
+          </button>
+        ))}
+        {data.gaps?.length ? (
+          <p className="small-muted">
+            待核：{data.gaps.map(String).join("、")}
+          </p>
+        ) : null}
+      </article>
     </>
   );
 }
@@ -2144,9 +3025,12 @@ function ImportPage({ notify }: { notify: (s: string) => void }) {
     if (!files.length) return;
     setBusy(true);
     setError("");
+    const previousPreview = preview;
     setPreview(null);
     setResult(null);
     try {
+      if (previousPreview?.id)
+        await rpc("cancel_import_preview", { preview_id: previousPreview.id });
       const payload = await Promise.all(
         files.map(async (file) => ({
           name: file.name,
@@ -2181,6 +3065,20 @@ function ImportPage({ notify }: { notify: (s: string) => void }) {
       setBusy(false);
     }
   };
+  const cancelPreview = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setError("");
+    try {
+      await rpc("cancel_import_preview", { preview_id: preview.id });
+      setPreview(null);
+      notify("导入预览已取消");
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
       <PageHead
@@ -2196,15 +3094,31 @@ function ImportPage({ notify }: { notify: (s: string) => void }) {
             multiple
             accept=".md,.markdown,.txt,.json,.zip"
             onChange={(e) => {
+              const previous = preview;
               setFiles(Array.from(e.target.files || []));
               setPreview(null);
+              if (previous?.id)
+                void rpc("cancel_import_preview", {
+                  preview_id: previous.id,
+                }).catch((err) => setError(messageOf(err)));
             }}
           />
         </label>
         <div className="form-row">
           <label className="field">
             资料类型
-            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <select
+              value={kind}
+              onChange={(e) => {
+                const previous = preview;
+                setKind(e.target.value);
+                setPreview(null);
+                if (previous?.id)
+                  void rpc("cancel_import_preview", {
+                    preview_id: previous.id,
+                  }).catch((err) => setError(messageOf(err)));
+              }}
+            >
               <option value="other">其他／不确定</option>
               <option value="cleaned_transcript">清洗稿</option>
               <option value="transcript">转写稿</option>
@@ -2216,7 +3130,15 @@ function ImportPage({ notify }: { notify: (s: string) => void }) {
             所属系列（可留空）
             <input
               value={series}
-              onChange={(e) => setSeries(e.target.value)}
+              onChange={(e) => {
+                const previous = preview;
+                setSeries(e.target.value);
+                setPreview(null);
+                if (previous?.id)
+                  void rpc("cancel_import_preview", {
+                    preview_id: previous.id,
+                  }).catch((err) => setError(messageOf(err)));
+              }}
               placeholder="例如《问道》"
             />
           </label>
@@ -2275,7 +3197,11 @@ function ImportPage({ notify }: { notify: (s: string) => void }) {
             <button className="primary" disabled={busy} onClick={commit}>
               确认导入
             </button>
-            <button className="secondary" onClick={() => setPreview(null)}>
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={cancelPreview}
+            >
               取消
             </button>
           </div>
@@ -2318,11 +3244,31 @@ function Settings({
   const [noteIds, setNoteIds] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const noteOptions = useRemote<{ items: Note[]; next_cursor: string | null }>(
-    "list_notes",
-    { limit: 100 },
-    [],
+  const [noteFind, setNoteFind] = useState("");
+  const [noteFrom, setNoteFrom] = useState("");
+  const [noteTo, setNoteTo] = useState("");
+  const noteOptions = usePagedRpc<Note>("list_notes", {
+    limit: 40,
+    from: noteFrom || undefined,
+    to: noteTo || undefined,
+  });
+  const searchedNotes = usePagedRpc<{
+    id: string;
+    title: string;
+    snippet: string;
+    web_path: string;
+  }>(
+    "search_library",
+    {
+      query: noteFind,
+      types: ["note"],
+      from: noteFrom || undefined,
+      to: noteTo || undefined,
+      limit: 40,
+    },
+    !!noteFind.trim(),
   );
+  const visibleNotes = noteFind.trim() ? searchedNotes : noteOptions;
   const [scope, setScope] = useState<"all" | "course" | "knowledge" | "notes">(
     "all",
   );
@@ -2330,20 +3276,41 @@ function Settings({
   const [share, setShare] = useState(false);
   const [redactions, setRedactions] = useState("");
   const [exportResult, setExportResult] = useState<any>(null);
+  const [exportParamsAtResult, setExportParamsAtResult] = useState<ReturnType<
+    typeof normalizeExportParams
+  > | null>(null);
+  const exportGeneration = useRef(0);
   const [backup, setBackup] = useState<any>(null);
+  const [includeContext, setIncludeContext] = useState(false);
   const [restore, setRestore] = useState<any>(null);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [confirmation, setConfirmation] = useState("");
-  const courseOptions = useRemote<{ items: Course[] }>(
+  const [buildInfo, setBuildInfo] = useState<{
+    version?: string;
+    commit?: string;
+    fingerprint?: string;
+    built_at?: string;
+  } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/health")
+      .then((r) => r.json())
+      .then((result) => {
+        if (alive) setBuildInfo(result.build || null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const courseOptions = usePagedRpc<Course>(
     "list_courses",
-    {},
-    [],
+    { limit: 30 },
     scope === "course",
   );
-  const cardOptions = useRemote<{ items: Card[] }>(
+  const cardOptions = usePagedRpc<Card>(
     "list_knowledge",
-    {},
-    [],
+    { limit: 30 },
     scope === "knowledge",
   );
   useEffect(() => {
@@ -2399,7 +3366,12 @@ function Settings({
     if (checked) values.add(id);
     else values.delete(id);
     setIds([...values].join("\n"));
+    invalidateExport();
+  };
+  const invalidateExport = () => {
+    exportGeneration.current++;
     setExportResult(null);
+    setExportParamsAtResult(null);
   };
   const rotate = () =>
     run("rotate", async () => {
@@ -2408,27 +3380,27 @@ function Settings({
     });
   const exportNow = () =>
     run("export", async () => {
-      const selectedIds = ids
-        .split(/[\n,，]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (scope !== "all" && !selectedIds.length)
+      const params = normalizeExportParams(scope, ids, share, redactions);
+      if (params.scope !== "all" && !params.ids.length)
         throw new Error("请先勾选至少一个条目。");
-      setExportResult(
-        await rpc("export_data", {
-          scope,
-          ids: selectedIds,
-          share,
-          redactions: redactions
-            .split("\n")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        }),
-      );
+      invalidateExport();
+      const generation = exportGeneration.current;
+      const generated = await rpc("export_data", params);
+      if (generation === exportGeneration.current) {
+        if (
+          !generated?.parameters ||
+          JSON.stringify(generated.parameters) !== JSON.stringify(params)
+        )
+          throw new Error("生成文件参数与本次选择不一致，已停止下载，请重试。");
+        setExportResult(generated);
+        setExportParamsAtResult(params);
+      }
     });
   const backupNow = () =>
     run("backup", async () => {
-      setBackup(await rpc("create_backup", {}));
+      setBackup(
+        await rpc("create_backup", { include_context: includeContext }),
+      );
       notify("备份文件已生成");
     });
   const previewRestore = () =>
@@ -2465,6 +3437,20 @@ function Settings({
         <h2>本地状态</h2>
         <dl className="facts">
           <div>
+            <dt>运行版本</dt>
+            <dd>
+              {buildInfo
+                ? `${buildInfo.version || status?.app_version || "未知"} · ${buildInfo.commit?.slice(0, 8) || "本地构建"}`
+                : status?.app_version || "读取中…"}
+              {buildInfo?.fingerprint && (
+                <small className="small-muted">
+                  {" "}
+                  · 构建 {buildInfo.fingerprint.slice(0, 12)}
+                </small>
+              )}
+            </dd>
+          </div>
+          <div>
             <dt>数据目录</dt>
             <dd className="path-value">{status?.data_dir || "读取中…"}</dd>
           </div>
@@ -2491,6 +3477,10 @@ function Settings({
         <p className="muted">
           仅勾选的能力可用于外部连接。私人记录按条勾选；未勾选的记录不提供外部读取。
         </p>
+        <p className="warning">
+          这里的 MCP
+          权限只约束工作台接口，不限制客户端使用其他本机能力。授权返回的内容可能进入外部模型上下文，请只勾选要提供的记录。
+        </p>
         {permissions && (
           <div className="permission-list">
             {(
@@ -2511,11 +3501,37 @@ function Settings({
         )}
         <div className="note-permissions">
           <span className="eyebrow">允许读取的记录</span>
-          {noteOptions.error && (
-            <ErrorBox error={noteOptions.error} retry={noteOptions.refresh} />
+          <div className="filters">
+            <label>
+              查找记录{" "}
+              <input
+                value={noteFind}
+                onChange={(e) => setNoteFind(e.target.value)}
+                placeholder="输入原话关键词"
+              />
+            </label>
+            <label>
+              开始日期{" "}
+              <input
+                type="date"
+                value={noteFrom}
+                onChange={(e) => setNoteFrom(e.target.value)}
+              />
+            </label>
+            <label>
+              结束日期{" "}
+              <input
+                type="date"
+                value={noteTo}
+                onChange={(e) => setNoteTo(e.target.value)}
+              />
+            </label>
+          </div>
+          {visibleNotes.error && (
+            <ErrorBox error={visibleNotes.error} retry={visibleNotes.refresh} />
           )}
           <div className="permission-list">
-            {noteOptions.data?.items.map((note) => (
+            {visibleNotes.items.map((note) => (
               <label key={note.id}>
                 <input
                   type="checkbox"
@@ -2528,27 +3544,38 @@ function Settings({
                   }
                 />
                 <span>
-                  {note.original_text.slice(0, 68)}{" "}
-                  <small>{dateLabel(note.created_at)}</small>
+                  {("original_text" in note
+                    ? String(note.original_text)
+                    : note.title
+                  ).slice(0, 68)}{" "}
+                  {"created_at" in note && (
+                    <small>{dateLabel(String(note.created_at))}</small>
+                  )}
                 </span>
               </label>
             ))}
           </div>
-          {noteOptions.data?.next_cursor && (
-            <p className="small-muted">
-              此处显示最近 100 条。较早记录可在下方输入 ID。
-            </p>
+          {visibleNotes.cursor && (
+            <button
+              className="secondary"
+              disabled={visibleNotes.loading}
+              onClick={visibleNotes.more}
+            >
+              加载更多记录
+            </button>
           )}
         </div>
-        <label className="field">
-          允许读取的记录 ID（每行一个，可用于较早记录）
-          <textarea
-            rows={3}
-            value={noteIds}
-            onChange={(e) => setNoteIds(e.target.value)}
-            placeholder="默认留空"
-          />
-        </label>
+        <details>
+          <summary>高级：按 ID 设置允许读取的记录</summary>
+          <label className="field">
+            记录 ID（每行一个）
+            <textarea
+              rows={3}
+              value={noteIds}
+              onChange={(e) => setNoteIds(e.target.value)}
+            />
+          </label>
+        </details>
         <div className="review-actions">
           <button
             className="primary"
@@ -2576,7 +3603,7 @@ function Settings({
             onChange={(e) => {
               setScope(e.target.value as typeof scope);
               setIds("");
-              setExportResult(null);
+              invalidateExport();
             }}
           >
             <option value="all">全部资料</option>
@@ -2590,10 +3617,10 @@ function Settings({
             <span className="eyebrow">选择要导出的条目</span>
             <div className="export-pick-list">
               {(scope === "course"
-                ? courseOptions.data?.items
+                ? courseOptions.items
                 : scope === "knowledge"
-                  ? cardOptions.data?.items
-                  : noteOptions.data?.items
+                  ? cardOptions.items
+                  : visibleNotes.items
               )?.map((item) => (
                 <label key={item.id}>
                   <input
@@ -2612,10 +3639,32 @@ function Settings({
                 </label>
               ))}
             </div>
-            {scope === "notes" && noteOptions.data?.next_cursor && (
-              <p className="small-muted">
-                此处显示最近 100 条记录。较早记录可以用下方的 ID 添加。
-              </p>
+            {scope === "notes" && visibleNotes.cursor && (
+              <button
+                className="secondary"
+                disabled={visibleNotes.loading}
+                onClick={visibleNotes.more}
+              >
+                加载更多记录
+              </button>
+            )}
+            {scope === "course" && courseOptions.cursor && (
+              <button
+                className="secondary"
+                disabled={courseOptions.loading}
+                onClick={courseOptions.more}
+              >
+                加载更多课程
+              </button>
+            )}
+            {scope === "knowledge" && cardOptions.cursor && (
+              <button
+                className="secondary"
+                disabled={cardOptions.loading}
+                onClick={cardOptions.more}
+              >
+                加载更多知识卡
+              </button>
             )}
             <details>
               <summary>高级：按 ID 指定较早或未列出的条目</summary>
@@ -2624,7 +3673,7 @@ function Settings({
                 value={ids}
                 onChange={(e) => {
                   setIds(e.target.value);
-                  setExportResult(null);
+                  invalidateExport();
                 }}
                 aria-label="导出对象 ID，每行一个"
               />
@@ -2635,7 +3684,10 @@ function Settings({
           <input
             type="checkbox"
             checked={share}
-            onChange={(e) => setShare(e.target.checked)}
+            onChange={(e) => {
+              setShare(e.target.checked);
+              invalidateExport();
+            }}
           />
           生成分享版本并先检查脱敏预览
         </label>
@@ -2645,7 +3697,10 @@ function Settings({
             <textarea
               rows={3}
               value={redactions}
-              onChange={(e) => setRedactions(e.target.value)}
+              onChange={(e) => {
+                setRedactions(e.target.value);
+                invalidateExport();
+              }}
               placeholder="例如姓名、账号或地点"
             />
           </label>
@@ -2653,11 +3708,31 @@ function Settings({
         <button className="primary" disabled={!!busy} onClick={exportNow}>
           生成导出预览
         </button>
-        {exportResult && (
+        {exportResult && exportParamsAtResult && (
           <div className="preview-box">
             <span className="eyebrow">
-              {share ? "分享脱敏预览" : "导出预览"}
+              {exportParamsAtResult.share ? "分享脱敏预览" : "私人导出预览"}
             </span>
+            <p className="small-muted">
+              这份文件的实际范围：
+              {
+                (
+                  {
+                    all: "全部资料",
+                    course: "所选课程",
+                    knowledge: "所选知识卡",
+                    notes: "所选个人记录",
+                  } as Record<string, string>
+                )[exportParamsAtResult.scope]
+              }
+              {exportParamsAtResult.scope !== "all"
+                ? ` · ${exportParamsAtResult.ids.length} 项`
+                : ""}{" "}
+              ·{" "}
+              {exportParamsAtResult.share
+                ? `分享版，替换 ${exportParamsAtResult.redactions.length} 个指定字词`
+                : "私人版，未脱敏"}
+            </p>
             <pre>
               {typeof exportResult.preview === "string"
                 ? exportResult.preview
@@ -2686,6 +3761,17 @@ function Settings({
         <p className="muted">
           备份含资料库与来源文件。恢复前先校验，提交时会自动保留当前状态的备份。
         </p>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={includeContext}
+            onChange={(e) => {
+              setIncludeContext(e.target.checked);
+              setBackup(null);
+            }}
+          />
+          额外包含本机运行上下文（默认不包含，备份始终排除连接凭证）
+        </label>
         <button className="secondary" disabled={!!busy} onClick={backupNow}>
           生成备份
         </button>

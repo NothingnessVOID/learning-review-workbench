@@ -30,3 +30,7 @@ codex mcp list -c 'mcp_servers.learning_workbench={command="/ABSOLUTE/PATH/TO/no
 独立演示库写入联调在 `127.0.0.1:47832` 与项目 `.data/demo` 完成：SDK 客户端验证记录追加、相同请求幂等、不同内容冲突、按条授权读取、复盘保存、课程草稿、知识草稿和待确认关联。测试结束已恢复演示库原有权限。复现时必须明确设置 `LEARNING_WORKBENCH_URL=http://127.0.0.1:47832` 和 `LEARNING_WORKBENCH_DATA_DIR` 指向该项目的 `.data/demo`；`scripts/mcp-demo-write-test.mjs` 会拒绝在其他目录或端口写入。
 
 `scripts/http-security-test.mjs` 使用相同的演示库限制检查 HTTP Host/Origin、会话与 CSRF、MCP 凭据、网页专用操作拒绝，以及个人学习状态和来源文件名的授权边界。脚本临时修改演示库权限后会恢复原值并复核；它不用于真实资料库。
+
+v1.1：工具输入由 `src/domain/contracts.ts` 同时供本地服务和 MCP 校验。列表新增分页并默认返回摘要，完整正文通过详情取得；复盘和案例加入搜索。个人记录关联结果会随授权撤销而过滤。单次读取超过 2 MiB 时明确报错，需缩小列表范围或分段读取原文。
+
+本机 stdio 接口仍为 21 项。新增网页交接包、案例／复盘详情、备份上下文选项均为本地网页功能，没有扩张 MCP 写权限。客户端的其他文件或命令权限不受本工作台 MCP 勾选框约束；授权给外部模型的返回内容可能离开本机。

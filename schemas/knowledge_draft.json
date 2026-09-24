@@ -68,6 +68,19 @@
             "minLength": 1,
             "maxLength": 160,
             "pattern": "^[\\w.-]+$"
+          },
+          "source_path": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "block_order": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "content_identity": {
+            "type": "string",
+            "maxLength": 300
           }
         },
         "required": [
@@ -108,12 +121,8 @@
   },
   "required": [
     "title",
-    "type",
-    "aliases",
     "body_md",
     "source_refs",
-    "topic_ids",
-    "verification_status",
     "expected_revision",
     "client_request_id"
   ],

@@ -1,0 +1,5 @@
+
+> learning-workbench@1.1.0 test:http
+> node scripts/http-regression.mjs
+
+HTTP regression passed: independent cookie jars, reused tab session, downloads across two ports, Host/Origin/CSRF, UI-only tools, running build.

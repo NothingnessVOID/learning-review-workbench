@@ -59,6 +59,18 @@ export async function rpc<T = any>(
   return result.data as T;
 }
 
+/** Best-effort unload write; the local reader bookmark remains the recovery copy. */
+export function rpcKeepalive(tool: string, args: Record<string, unknown>) {
+  if (!csrf) return;
+  void fetch("/api/rpc", {
+    method: "POST",
+    credentials: "same-origin",
+    keepalive: true,
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+    body: JSON.stringify({ tool, args }),
+  }).catch(() => {});
+}
+
 export function requestId() {
   return crypto.randomUUID();
 }

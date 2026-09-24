@@ -64,8 +64,6 @@
   },
   "required": [
     "original_text",
-    "type",
-    "relation_ids",
     "client_request_id"
   ],
   "additionalProperties": false

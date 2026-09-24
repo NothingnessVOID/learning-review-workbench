@@ -108,13 +108,14 @@ if (service.store.all("courses").length === 0) {
   const courses = (await call("list_courses")).items;
   const first = await call("get_course", { course_id: courses[0].id }),
     second = await call("get_course", { course_id: courses[1].id });
+  const firstTopic = await call("get_topic", { topic_id: first.topics[0].id });
   const card = await call("submit_knowledge_draft", {
     title: "DEMO · 保留原始输入",
     aliases: ["原话", "原始记录", "黑金心力疗愈"],
     type: "method",
     body_md:
       "演示方法：先保存原始文字，再追加理解或复盘。\n\n这张卡关联两门演示课程，展示跨课程复用。它并不代表已经掌握任何黑金方法。",
-    source_refs: first.topics[0].blocks[0].source_refs,
+    source_refs: firstTopic.blocks[0].source_refs,
     topic_ids: [first.topics[0].id, second.topics[0].id],
     expected_revision: 0,
     client_request_id: uid("req"),
@@ -152,7 +153,7 @@ if (service.store.all("courses").length === 0) {
     title: "DEMO · 待审知识补充",
     type: "concept",
     body_md: "这是一条待审草稿，用来检验确认采用与撤回。",
-    source_refs: first.topics[0].blocks[0].source_refs,
+    source_refs: firstTopic.blocks[0].source_refs,
     topic_ids: [first.topics[0].id],
     expected_revision: 0,
     client_request_id: uid("req"),

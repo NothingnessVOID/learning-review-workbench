@@ -15,3 +15,15 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: node scripts/mcp-protocol-test.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:http
+      - run: npm run test:e2e
+      - run: node scripts/long-benchmark.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-evidence
+          path: |
+            artifacts/screenshots/
+            artifacts/ui-regression/
+            artifacts/test-results/

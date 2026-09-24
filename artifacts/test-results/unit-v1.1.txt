@@ -1,0 +1,57 @@
+
+> learning-workbench@1.1.0 test
+> tsx --test tests/*.test.ts
+
+✔ M04 versioned runtime context, explicit snapshot, restore and rollback exclude credentials (9.130833ms)
+✔ E03 build fingerprint detects source and lock changes and ignores unrelated notes (53.383666ms)
+✔ M02: service, HTTP, and official MCP SDK enforce the same strict read inputs (856.171666ms)
+✔ M02: shared pagination defaults are explicit and reject boolean coercion (0.522084ms)
+✔ Markdown preview/commit, repeated import, and new source version keep old excerpts (95.565792ms)
+✔ quick note idempotency, request ID conflict, selected MCP note access, and invalid source references (16.13375ms)
+✔ course coverage is complete, accepted drafts preserve user notes and learning state, and stale drafts conflict (40.468834ms)
+✔ backup restore previews in isolation and restores only the chosen backup snapshot (39.724459ms)
+✔ R06: failed commit rolls back DB and staging, removes only newly written unreferenced source (46.475709ms)
+✔ R06: successful commit remains idempotent after staging cleanup (22.862458ms)
+✔ R03: backup restore accepts 999 and more than 1000 distinct source snapshots (1662.897667ms)
+✔ R03: backup rejects data over 128 MiB before creating a downloadable archive (7.596583ms)
+✔ M04: opted-in backup restores fixed runtime context without credentials (59.121ms)
+✔ R04: valid backup restores missing current source and marks rescue copy (17.53ms)
+✔ R04: valid backup restores corrupt current source and marks rescue copy (17.293833ms)
+✔ R04: oversized damaged current source still permits validated restore with rescue (407.409292ms)
+✔ R04: changed staged ZIP bytes are rejected before replacing current data (14.526959ms)
+✔ R04/M04: failed restore rolls back source, database, and previous runtime context (24.303958ms)
+✔ R06: preview stores bytes outside SQLite, cancel/commit/expiry clean staging (8.371708ms)
+✔ R06: expired staged uploads are cleaned after a store restart (6.199166ms)
+✔ R07: share redaction preserves JSON keys and IDs while preview matches ZIP (8.5465ms)
+✔ U02: headings group multiple source blocks into one unreviewed topic (20.222334ms)
+✔ U06: an authorized note does not reveal revoked relation IDs or library relation details (16.270417ms)
+✔ U06: a review is hidden unless every source note remains authorized (9.556459ms)
+✔ U06/M01: note authorization is applied before cursor pagination (11.200041ms)
+✔ M01: draft and relation lists honor limit and cursor (9.953583ms)
+✔ M01: detail retrieval returns complete long body without silent truncation (35.024417ms)
+✔ M01: long list items are summaries while single-record detail preserves complete text (339.827834ms)
+✔ M01: oversized read returns explicit error and never a silent partial body (71.788916ms)
+✔ accepts DEMO TXT, JSON package manifest, and ZIP; reports unsupported files without importing them (76.00275ms)
+✔ rejects ZIP traversal, symbolic links, and oversized entries before import (161.610334ms)
+✔ course-scoped export never includes related private notes (50.579458ms)
+✔ traditional/simplified Chinese, two-character queries, and aliases search correctly without leaking private notes to MCP (13.557083ms)
+✔ knowledge card linked across two course topics can be revised without replacing personal notes or learning state (30.494041ms)
+✔ restore rejects tampered source hashes and leaves the active data untouched (21.661ms)
+✔ source cursors return consecutive non-overlapping blocks, while old-version text remains fixed (33.385167ms)
+✔ R05: accepting a course draft rechecks topic ownership and revision in the transaction (80.259ms)
+✔ R05 legacy V1 drafts reconstruct topic revisions from revision history (24.777125ms)
+✔ M03 rejects unknown coverage dispositions and topicless main teaching (25.866042ms)
+✔ M03 keeps source quotations and AI examples as separate teaching block types (18.739916ms)
+✔ U03 maps same-package source and topic temporary IDs with an explainable result (23.174375ms)
+✔ U05 date filters include the whole selected day and notes paginate by occurred_at (15.906375ms)
+✔ U06 default search includes cases/reviews but never crosses note permissions (15.235708ms)
+✔ M01 large detail preserves complete text or gives an explicit error (30.220083ms)
+✔ U09 handoff includes only explicitly selected notes and sources (22.709583ms)
+ℹ tests 45
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2606.82675

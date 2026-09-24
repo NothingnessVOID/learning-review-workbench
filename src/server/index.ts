@@ -1,7 +1,7 @@
 import express from "express";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Service } from "../domain/service.js";
@@ -14,11 +14,23 @@ const dataDir =
   join(homedir(), "Library", "Application Support", "LearningWorkbench");
 const port = Number(process.env.LEARNING_WORKBENCH_PORT ?? 47831);
 const service = new Service(dataDir, projectDir);
+const buildPath = join(projectDir, "dist", "build-info.json");
+const build = existsSync(buildPath)
+  ? JSON.parse(readFileSync(buildPath, "utf8"))
+  : { version: "1.1.0", fingerprint: "development", commit: "unbuilt" };
+const instance = createHash("sha256")
+  .update(resolve(dataDir) + ":" + port)
+  .digest("hex")
+  .slice(0, 16);
+const cookieName = `workbench_session_${instance}`;
 const app = express();
 app.disable("x-powered-by");
 const sessions = new Map<string, { csrf: string; expires: number }>();
-const equal = (a: string, b: string) =>
-  a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const equal = (a: string, b: string) => {
+  const left = Buffer.from(a),
+    right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+};
 app.use((req, res, next) => {
   const host = req.headers.host ?? "";
   const expected = `127.0.0.1:${port}`;
@@ -55,14 +67,30 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: "96mb" }));
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, app: "learning-workbench", version: "1.0.0" }),
+  res.json({
+    ok: true,
+    app: "learning-workbench",
+    version: build.version,
+    build,
+    instance,
+  }),
 );
 app.get("/api/session", (req, res) => {
+  const existingToken = (req.headers.cookie ?? "")
+    .split(";")
+    .map((v) => v.trim())
+    .find((v) => v.startsWith(cookieName + "="))
+    ?.slice(cookieName.length + 1);
+  const existing = existingToken ? sessions.get(existingToken) : undefined;
+  if (existing && existing.expires > Date.now()) {
+    res.json({ csrf: existing.csrf });
+    return;
+  }
   const token = randomBytes(32).toString("hex"),
     csrf = randomBytes(32).toString("hex");
   for (const [k, v] of sessions) if (v.expires < Date.now()) sessions.delete(k);
   sessions.set(token, { csrf, expires: Date.now() + 24 * 3600 * 1000 });
-  res.cookie("workbench_session", token, {
+  res.cookie(cookieName, token, {
     httpOnly: true,
     sameSite: "strict",
     path: "/",
@@ -74,8 +102,8 @@ const auth: express.RequestHandler = (req, res, next) => {
   const token = (req.headers.cookie ?? "")
     .split(";")
     .map((v) => v.trim())
-    .find((v) => v.startsWith("workbench_session="))
-    ?.slice(18);
+    .find((v) => v.startsWith(cookieName + "="))
+    ?.slice(cookieName.length + 1);
   const session = token ? sessions.get(token) : null;
   if (
     !session ||

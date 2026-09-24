@@ -11,6 +11,9 @@ export const ref = z
     source_document_id: id,
     source_version_id: id,
     source_block_id: id,
+    source_path: z.string().max(1000).optional(),
+    block_order: z.number().int().min(0).max(1000000).optional(),
+    content_identity: z.string().max(300).optional(),
   })
   .strict();
 export const teachingBlock = z
@@ -23,7 +26,28 @@ export const teachingBlock = z
     source_refs: z.array(ref).max(500),
     verification_status: z.string().max(80).default("needs_review"),
   })
-  .strict();
+  .strict()
+  .superRefine((block, ctx) => {
+    if (block.type !== "source_quote") return;
+    if (block.source_refs.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["source_refs"],
+        message: "source_quote 必须关联至少一个原文来源。",
+      });
+    }
+    if (
+      !["original_quote", "direct_quote", "verbatim", "quote"].includes(
+        block.transformation,
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["transformation"],
+        message: "source_quote 只能标记为实际引用原文的 transformation。",
+      });
+    }
+  });
 export const topic = z
   .object({
     id: id,
@@ -32,6 +56,7 @@ export const topic = z
     parent_id: id.nullable().default(null),
     order: z.number().int().min(0),
     content_kind: z.string().max(60),
+    content_identity: z.string().min(1).max(300).optional(),
     blocks: z.array(teachingBlock).max(300),
     revision: z.number().int().optional(),
   })
@@ -52,8 +77,19 @@ export const courseDraft = z
         z
           .object({
             source_block_id: id,
-            disposition: z.string().max(80),
+            disposition: z.enum([
+              "main_teaching",
+              "recap",
+              "case",
+              "question_answer",
+              "background",
+              "notice",
+              "retained",
+              "unresolved",
+              "included",
+            ]),
             topic_ids: z.array(id).max(100),
+            content_identity: z.string().min(1).max(300).optional(),
           })
           .strict(),
       )

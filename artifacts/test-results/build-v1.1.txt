@@ -1,0 +1,23 @@
+
+> learning-workbench@1.1.0 build
+> tsc --noEmit && vite build && esbuild src/server/index.ts --outfile=dist/index.js --platform=node --format=esm --packages=external --bundle && esbuild src/mcp/stdio.ts --outfile=dist/stdio.js --platform=node --format=esm --packages=external --bundle && node scripts/build-info.mjs
+
+vite v8.3.0 building client environment for production...
+transforming...
+✓ 268 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/web/index.html                   0.46 kB │ gzip:   0.32 kB
+dist/web/assets/index-Ltw_oHyg.css   24.41 kB │ gzip:   6.30 kB
+dist/web/assets/index-nx207j_t.js   456.02 kB │ gzip: 137.31 kB
+
+✓ built in 91ms
+
+  dist/index.js  151.2kb
+
+⚡ Done in 9ms
+
+  dist/stdio.js  14.0kb
+
+⚡ Done in 1ms
+{"fingerprint":"c5971c2e33d0aa9d3351c0d9ffaa5c39386cea43ac3e9e053faa68437fa891af","lock_hash":"857bf32f825676f9e33df7ed02533cdee4b2af0565da55a36605c3754f61dc13","version":"1.1.0","commit":"384f1f33e71bc022023afd1a3c2d16edba173e9b","built_at":"2026-09-24T11:36:08.244Z"}

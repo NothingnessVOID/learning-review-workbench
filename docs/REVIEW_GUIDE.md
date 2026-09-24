@@ -36,7 +36,7 @@ npm test
 npm run build
 ```
 
-单元与集成测试使用 Node 临时目录和代码生成的 DEMO 文本，不需要导入真实资料。性能脚本也在临时库生成虚构数据，测量范围是本机服务层，不覆盖浏览器、MCP 传输、并发负载或真实资料规模。截图仅展示 DEMO 界面。
+单元与集成测试使用 Node 临时目录和代码生成的 DEMO 文本，不需要导入真实资料。性能脚本也在临时库生成虚构数据；原 benchmark.ts 测服务层，新 long-benchmark.mjs 测真实 HTTP 与 MCP，均不代表并发负载或真实资料规模。截图仅展示 DEMO 界面。
 
 启动脚本、MCP 实连脚本和 UI 集成脚本可能启动本机服务或写入演示库。运行前请先阅读具体脚本，确认它使用隔离的 DEMO 数据目录；不要把真实数据库路径传给测试或基准程序。真实 MCP 配置应用脚本会修改本机客户端设置，只能在审查者明确需要验证该行为时检查，不应作为常规 CI 步骤。
 
@@ -45,3 +45,20 @@ npm run build
 测试通过只证明所列用例在当前环境成功，不能证明未覆盖路径安全，也不等于独立渗透测试、无障碍审计、跨平台验证或多人并发验收。工作台保存的数据和备份没有应用层加密；外部 Agent 客户端接收已授权内容后，内容可能进入该客户端的模型上下文。仓库不提供云端访问本机服务的能力。
 
 提交审查前，请确认版本控制索引中没有本机专属上下文、原始需求、真实来源材料或其派生讲义、导入盘点、凭据、数据库、备份和本机 MCP 配置记录。只审查公开仓库里的通用软件行为与 DEMO。
+
+## 本轮改进的复核
+
+按 `docs/IMPROVEMENT_TRACKER.md` 的编号检查修复与剩余边界。新增测试覆盖保存竞争、导出过时响应、受损恢复、导入清理、草稿归属、分页、授权依赖与运行上下文；仍需独立检查未覆盖的输入组合。
+
+```sh
+npm ci
+npm run build
+npm test
+node scripts/mcp-protocol-test.mjs
+npx playwright install chromium
+npm run test:http
+npm run test:e2e
+node scripts/long-benchmark.mjs
+```
+
+新 HTTP 和 E2E 启动器自行建立临时端口及临时 DEMO 数据目录，并在退出时关闭自身服务。浏览器默认使用 Playwright 管理的 Chromium，也可设置 `PLAYWRIGHT_EXECUTABLE_PATH`。失败的浏览器测试保留截图与 trace；CI 上传它们作为构建产物。长文本基准测量真实 HTTP 和 stdio MCP 的返回字节与耗时，输入仍是合成演示数据，不是用户课程。

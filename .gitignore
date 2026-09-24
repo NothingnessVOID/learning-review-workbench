@@ -22,3 +22,4 @@ artifacts/private/
 .DS_Store
 .env.*
 !.env.example
+artifacts/ui-regression/*.zip
