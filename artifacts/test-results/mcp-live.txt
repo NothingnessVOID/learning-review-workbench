@@ -1,0 +1,5 @@
+get_status: ok
+get_schema: ok
+get_agent_context: ok
+MCP personal learning state isolation: ok
+MCP tools/list: 21 tools

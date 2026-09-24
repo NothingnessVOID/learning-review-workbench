@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "read_library": {
+      "type": "boolean"
+    },
+    "append_notes": {
+      "type": "boolean"
+    },
+    "save_reviews": {
+      "type": "boolean"
+    },
+    "submit_courses": {
+      "type": "boolean"
+    },
+    "submit_knowledge": {
+      "type": "boolean"
+    },
+    "propose_relations": {
+      "type": "boolean"
+    },
+    "read_note_ids": {
+      "maxItems": 10000,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160,
+        "pattern": "^[\\w.-]+$"
+      }
+    }
+  },
+  "required": [
+    "read_library",
+    "append_notes",
+    "save_reviews",
+    "submit_courses",
+    "submit_knowledge",
+    "propose_relations",
+    "read_note_ids"
+  ],
+  "additionalProperties": false
+}

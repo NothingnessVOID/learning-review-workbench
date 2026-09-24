@@ -1,0 +1,4 @@
+Demo baseline permissions: {"read_library":true,"append_notes":false,"save_reviews":false,"submit_courses":true,"submit_knowledge":true,"propose_relations":true}, read_note_ids_count=0
+HTTP demo security: Host, Origin, session, CSRF, token, UI-only denial, personal layer and source scope: passed
+MCP calls checked: get_status, review_draft, set_permissions, commit_restore, rotate_mcp_token, list_courses, get_course, get_topic, list_knowledge, get_knowledge_card, get_agent_context
+Demo permissions restored

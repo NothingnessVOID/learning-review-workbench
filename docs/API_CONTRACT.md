@@ -1,0 +1,57 @@
+# Internal API contract v1
+Local production http://127.0.0.1:47831. React frontend uses same origin.
+GET /api/session returns {csrf:string}; cookie HttpOnly session. POST /api/rpc with X-CSRF-Token + JSON {tool:string,args:object}. Every response {ok:boolean,data?:any,error?:{code,message,details?},warnings:[],next_cursor:null|string}. Only show success when ok.
+GET /api/download/:id downloads prepared export/backup using session.
+MCP uses POST /api/mcp {tool,args} Authorization: Bearer token. UI-only tools strictly unavailable there. Token stored outside source data dir credentials.json {token}. GET /health is public version/ok only.
+
+Common object ID string, revision integer, created_at updated_at ISO UTC, web_path hash route.
+UI hash routes #courses, #course/<id>, #topic/<id>, #knowledge, #card/<id>, #notes, #note/<id>, #drafts, #draft/<id>, #settings, #import, #search?q=...
+
+## Read tool results (data)
+get_status {} => {app_version,schema_version,data_dir,counts:{courses,cards,notes,drafts},permissions,read_only,mode:'private'|'demo'}
+get_agent_context {sections?:string[]} => {sections: Record<string,string>, available_materials, gaps}
+get_schema {entity_type?:string} => JSON schemas
+list_courses {query?,series?} => {items:[Course],series:[]}
+get_course {course_id,revision?} => Course + {topics:Topic[],source_versions:Version[],learning_state:LearningState|null}
+get_topic {topic_id,revision?} => Topic + {course:Course,knowledge_cards:Card[],learning_state,notes:Note[]} (notes only UI or granted MCP)
+list_knowledge {query?,type?} => {items:Card[]}
+get_knowledge_card {card_id,revision?} => Card + {topics:Topic[],notes:Note[],learning_state}
+get_source_excerpt {source_version_id,source_block_id?,cursor?,limit?:1..20} => {source_document,source_version,blocks:SourceBlock[],next_cursor,total_blocks}; each block {id,source_document_id,source_version_id,order,title_path,text,line_start,line_end}; previous/next use cursor.
+search_library {query,types?:string[],limit?,cursor?} => {items:[{id,type,title,snippet,source,web_path}],searched_scope,next_cursor}
+list_notes {type?,relation_id?,limit?,cursor?} => {items:Note[],next_cursor}
+get_note {note_id} => Note + {reviews:Review[],followups:Note[],relations:Relation[]}
+list_drafts {} => {items:Draft[]}
+get_draft_status {draft_id} => Draft + {current:object|null,proposed:object,validation:{warnings:[],errors:[]}}
+list_audit {} => {items:Audit[]}
+list_relations {} => {items:Relation[]}
+
+Course {id,title,series,course_date:null|string,overview,revision,processing_status,verification_status,topic_count,source_version_ids:[],learning_state?}
+Topic {id,course_id,parent_id:null|string,order,title,content_kind,blocks:TeachingBlock[],revision}
+TeachingBlock {id,type,body_md,origin_kind,transformation,source_refs:SourceRef[],verification_status}
+SourceRef {source_document_id,source_version_id,source_block_id}
+Card {id,title,original_name,type,original_type,aliases:[],body_md,source_refs:[],topic_ids:[],verification_status,revision}
+Note {id,original_text,type,created_at,updated_at,occurred_at:null|string,privacy:'private',author_type,relation_ids:[],parent_note_id:null|string,revision}
+Review {id,note_ids:[],body_md,author_type,method_name:null|string,method_version:null|string,basis:[],gaps:[],created_at}
+Draft {id,entity_type:'course'|'knowledge',entity_id,status:'draft'|'accepted'|'rejected'|'reverted',expected_revision,payload,created_at,revision}
+LearningState {object_id,status,position:{topic_id?,scroll?},updated_at,revision}
+
+## Shared write tools
+create_note {original_text,type?:'quick'|'understanding'|'question'|'event'|'feedback'|'seed',relation_ids?:[],parent_note_id?,occurred_at?,client_request_id} => Note
+save_review_result {note_ids:[],body_md,method_name?,method_version?,basis?:[],gaps?:[],client_request_id} => Review
+propose_relations {relations:[{from_id,to_id,kind,reason?,source_refs?:[]}],client_request_id} => {items:Relation[]}
+submit_course_draft {course_id?,title?,series?,course_date?,overview,expected_revision,source_version_ids:[],topics:Topic[],coverage:[],knowledge_candidates?:[],unresolved_questions?:[],client_request_id} => Draft (topic course_id optional)
+submit_knowledge_draft {card_id?,title,type?,original_name?,original_type?,aliases?:[],body_md,source_refs:[],topic_ids?:[],verification_status?,expected_revision,client_request_id} => Draft
+
+## UI-only writes
+set_learning_state {object_id,status?,position?,expected_revision?} => LearningState
+review_draft {draft_id,action:'accept'|'reject'|'revert',expected_revision} => Draft (CSRF + UI session only)
+archive_note {note_id,expected_revision,archived:boolean} => Note
+set_permissions {permissions:{read_library:boolean,append_notes:boolean,save_reviews:boolean,submit_courses:boolean,submit_knowledge:boolean,propose_relations:boolean,read_note_ids:string[]}} => permissions
+rotate_mcp_token {} => {rotated:true}; adapter rereads credential file automatically. UI never needs raw secret.
+review_relation {relation_id,status:'confirmed'|'rejected'} => Relation
+preview_import {files:[{name,content_base64}],source_kind?:'cleaned_transcript'|'transcript'|'peer_summary'|'original_book'|'other',series?:string} => {id,items:[{name,type,status,sha256?,warnings:[]}],counts:{sources,courses,cards,cases,duplicates,unsupported},warnings:[]}
+commit_import {preview_id} => {imported:[],skipped:[],drafts:[],warnings:[]}
+export_data {scope:'all'|'course'|'knowledge'|'notes',ids?:string[],share?:boolean,redactions?:string[]} => {id,download_url,filename,preview, warnings:[]}; course excludes notes. UI show share preview prior download, redactions literal replacements.
+create_backup {} => {id,download_url,filename,counts}
+preview_restore {content_base64} => {id,counts,valid:true,warnings:[]}
+commit_restore {preview_id,confirmation:'恢复此备份'} => {restored:true,previous_backup:string}

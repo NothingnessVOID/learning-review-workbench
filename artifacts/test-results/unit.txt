@@ -1,0 +1,23 @@
+
+> learning-workbench@1.0.0 test
+> tsx --test tests/*.test.ts
+
+✔ Markdown preview/commit, repeated import, and new source version keep old excerpts (36.936959ms)
+✔ quick note idempotency, request ID conflict, selected MCP note access, and invalid source references (9.227708ms)
+✔ course coverage is complete, accepted drafts preserve user notes and learning state, and stale drafts conflict (17.013209ms)
+✔ backup restore previews in isolation and restores only the chosen backup snapshot (23.141833ms)
+✔ accepts DEMO TXT, JSON package manifest, and ZIP; reports unsupported files without importing them (27.496125ms)
+✔ rejects ZIP traversal, symbolic links, and oversized entries before import (89.84825ms)
+✔ course-scoped export never includes related private notes (15.176667ms)
+✔ traditional/simplified Chinese, two-character queries, and aliases search correctly without leaking private notes to MCP (6.608708ms)
+✔ knowledge card linked across two course topics can be revised without replacing personal notes or learning state (16.331833ms)
+✔ restore rejects tampered source hashes and leaves the active data untouched (14.979958ms)
+✔ source cursors return consecutive non-overlapping blocks, while old-version text remains fixed (23.552167ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 385.578708

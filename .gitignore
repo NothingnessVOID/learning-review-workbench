@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.data/
+*.sqlite*
+*.log
+.env
+artifacts/private/
+
+# Local-only context, original requirements, real source derivatives and machine setup
+/docs/REQUIREMENTS.md
+/docs/SOURCE_INVENTORY.md
+/docs/SAMPLE_COURSE_REVIEW.md
+/docs/IMPORT_REPORT.md
+/docs/USER_CONTEXT.md
+/docs/WORLDVIEW_CONTEXT.md
+/docs/HEIJIN_CONTEXT.md
+/docs/CONTENT_RULES.md
+/docs/LOCAL_*.md
+/scripts/prepare-real-course.mjs
+**/credentials.json
+**/server.pid
+.DS_Store
+.env.*
+!.env.example

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "note_ids": {
+      "minItems": 1,
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160,
+        "pattern": "^[\\w.-]+$"
+      }
+    },
+    "body_md": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300000
+    },
+    "method_name": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "method_version": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "basis": {
+      "default": [],
+      "maxItems": 100,
+      "type": "array",
+      "items": {}
+    },
+    "gaps": {
+      "default": [],
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    },
+    "client_request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[\\w.-]+$"
+    }
+  },
+  "required": [
+    "note_ids",
+    "body_md",
+    "basis",
+    "gaps",
+    "client_request_id"
+  ],
+  "additionalProperties": false
+}

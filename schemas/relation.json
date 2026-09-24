@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "relations": {
+      "minItems": 1,
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[\\w.-]+$"
+          },
+          "to_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[\\w.-]+$"
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 3000
+          },
+          "source_refs": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_document_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[\\w.-]+$"
+                },
+                "source_version_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[\\w.-]+$"
+                },
+                "source_block_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[\\w.-]+$"
+                }
+              },
+              "required": [
+                "source_document_id",
+                "source_version_id",
+                "source_block_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "from_id",
+          "to_id",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "client_request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[\\w.-]+$"
+    }
+  },
+  "required": [
+    "relations",
+    "client_request_id"
+  ],
+  "additionalProperties": false
+}
