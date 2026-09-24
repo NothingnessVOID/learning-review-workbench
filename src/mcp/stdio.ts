@@ -19,6 +19,8 @@ const descriptions: Record<string, string> = {
   search_library: "在授权范围内搜索课程、知识和记录。",
   list_notes: "列出获单独授权的个人记录。",
   get_note: "按 ID 读取获授权的个人记录与复盘。",
+  get_case: "按 ID 读取资料范围内的完整案例及来源身份。",
+  get_review_result: "按 ID 读取完整复盘；所有原始记录均须获授权。",
   list_drafts: "列出草稿状态。",
   get_draft_status: "读取草稿校验结果与收录状态。",
   list_audit: "读取授权范围内的变更记录。",
@@ -158,7 +160,7 @@ async function callService(tool: string, args: Record<string, unknown>) {
   }
 }
 
-const server = new McpServer({ name: "learning-workbench", version: "1.1.0" });
+const server = new McpServer({ name: "learning-workbench", version: "1.2.0" });
 for (const [name, schema] of Object.entries(sharedToolSchemas)) {
   server.registerTool(
     name,

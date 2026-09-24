@@ -65,7 +65,7 @@ try {
   );
   await client.connect(transport);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 21);
+  assert.equal(tools.length, 23);
   assert(tools.some((tool) => tool.name === "get_status"));
   assert(!tools.some((tool) => tool.name === "rotate_mcp_token"));
   const first = await client.callTool({ name: "get_status", arguments: {} });

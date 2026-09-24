@@ -1,3 +1,4 @@
+import { calendarDateRange } from "./dates";
 export type ApiError = Error & { code?: string; details?: unknown };
 let csrf: string | null = null;
 let sessionPromise: Promise<string> | null = null;
@@ -23,7 +24,11 @@ export async function rpc<T = any>(
   tool: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
-  const body = JSON.stringify({ tool, args });
+  const wireArgs =
+    tool === "list_notes" || tool === "search_library"
+      ? calendarDateRange(args)
+      : args;
+  const body = JSON.stringify({ tool, args: wireArgs });
   const send = async (token: string) => {
     try {
       return await fetch("/api/rpc", {

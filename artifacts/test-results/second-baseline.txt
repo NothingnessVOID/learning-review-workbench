@@ -1,0 +1,118 @@
+Second-round supplied-template baseline
+Snapshot: commit 109a904d77f98f50a78ce768a7a5c57891386084 extracted from Git, with only the supplied tests/habit-regressions.test.ts added.
+Dependency source: repository's existing locked node_modules symlink; no build performed.
+Data scope: all Service fixtures use mkdtemp synthetic data and are removed after each test. No production or demo DB is opened.
+Command: node_modules/.bin/tsx --test --test-reporter=spec tests/habit-regressions.test.ts
+
+Raw stdout/stderr follows.
+✖ B01: the exact rendered teaching-block anchor must persist server-side (33.916ms)
+✖ B02: selecting a Singapore calendar day includes its early hours, not the next day (12.269125ms)
+✖ B05: a confirmed note-topic relation is visible from both endpoints (13.952208ms)
+✖ B04: an unchanged course must not show all existing teaching blocks as newly added (10.143667ms)
+✖ B04: removing a known teaching block must be visible in course review (9.923167ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 365.962542
+
+✖ failing tests:
+
+test at tests/habit-regressions.test.ts:41:1
+✖ B01: the exact rendered teaching-block anchor must persist server-side (33.916ms)
+  AssertionError [ERR_ASSERTION]: set_learning_state: {"code":"NOT_FOUND","message":"找不到指定对象。","details":{"id":"tb_4cb8e933b7524785abcff2051d61e7c5"}}
+
+  false !== true
+
+      at data (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:26:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:47:17)
+      at async withService (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:21:9)
+      at async TestContext.<anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:42:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/habit-regressions.test.ts:58:1
+✖ B02: selecting a Singapore calendar day includes its early hours, not the next day (12.269125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    Set(2) {
+      'note_7e928594bdb543f2aab2fee069dcf3c6',
+  +   'note_e4fbb6619f6b424e8e8bbff8aebaf164'
+  -   'note_ef1df0c3c2974a22bd2f8ee0f763086d'
+    }
+
+      at <anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:71:12)
+      at async withService (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:21:9)
+      at async TestContext.<anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:59:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Set(2) { 'note_e4fbb6619f6b424e8e8bbff8aebaf164', 'note_7e928594bdb543f2aab2fee069dcf3c6' },
+    expected: Set(2) { 'note_ef1df0c3c2974a22bd2f8ee0f763086d', 'note_7e928594bdb543f2aab2fee069dcf3c6' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests/habit-regressions.test.ts:75:1
+✖ B05: a confirmed note-topic relation is visible from both endpoints (13.952208ms)
+  AssertionError [ERR_ASSERTION]: Confirmed relation vanished from the topic side
+      at <anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:89:5)
+      at async withService (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:21:9)
+      at async TestContext.<anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:76:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/habit-regressions.test.ts:95:1
+✖ B04: an unchanged course must not show all existing teaching blocks as newly added (10.143667ms)
+  AssertionError [ERR_ASSERTION]: The current-side API response is a topic summary, not complete comparison content
+
+  5 !== 0
+
+      at <anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:101:12)
+      at async withService (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:21:9)
+      at async TestContext.<anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:96:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 5,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/habit-regressions.test.ts:106:1
+✖ B04: removing a known teaching block must be visible in course review (9.923167ms)
+  AssertionError [ERR_ASSERTION]: Removed block was hidden because the current side has no blocks
+      at <anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:115:5)
+      at async withService (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:21:9)
+      at async TestContext.<anonymous> (/Users/abyssldx/Documents/TSY/个人学习与复盘工作台/.data/second-baseline-worktree/tests/habit-regressions.test.ts:107:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

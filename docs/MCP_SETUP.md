@@ -15,7 +15,7 @@ cwd = "/ABSOLUTE/PATH/TO/PROJECT"
 
 适配器每次工具调用都从 `~/Library/Application Support/LearningWorkbench/credentials.json` 读取 MCP token，网页轮换 token 后无需重启适配器。若工作台使用自定义数据目录，在上述表中加 `env = { LEARNING_WORKBENCH_DATA_DIR = "/绝对路径/数据目录" }`。该目录的 `credentials.json` 应由工作台创建，不要将 token 写入配置或项目。`LEARNING_WORKBENCH_URL` 仅用于覆盖本地服务地址，只接受 `http://127.0.0.1:端口`，不接受远程主机。适配器 stdout 只用于 MCP 协议。
 
-读取工具：`get_status`、`get_agent_context`、`get_schema`、`list_courses`、`get_course`、`get_topic`、`list_knowledge`、`get_knowledge_card`、`get_source_excerpt`、`search_library`、`list_notes`、`get_note`、`list_drafts`、`get_draft_status`、`list_audit`、`list_relations`。写入工具：`create_note`、`save_review_result`、`propose_relations`、`submit_course_draft`、`submit_knowledge_draft`。网页专用的审核、权限、备份和导入工具不通过 MCP 暴露。个人记录读取及每类写入权限由本地服务检查；适配器的工具标注仅帮助客户端识别风险。
+读取工具：`get_status`、`get_agent_context`、`get_schema`、`list_courses`、`get_course`、`get_topic`、`list_knowledge`、`get_knowledge_card`、`get_source_excerpt`、`search_library`、`list_notes`、`get_note`、`get_case`、`get_review_result`、`list_drafts`、`get_draft_status`、`list_audit`、`list_relations`。写入工具：`create_note`、`save_review_result`、`propose_relations`、`submit_course_draft`、`submit_knowledge_draft`。网页专用的审核、权限、备份和导入工具不通过 MCP 暴露。个人记录读取及每类写入权限由本地服务检查；适配器的工具标注仅帮助客户端识别风险。
 
 在项目目录运行 `node scripts/mcp-protocol-test.mjs` 可用官方 SDK 客户端验证 initialize、tools/list、tools/call、输入校验、凭据轮换和服务离线错误；测试使用临时模拟服务与临时 token，不读取真实数据。服务运行后可运行 `node scripts/mcp-live-check.mjs`，它仅调用 `get_status`、`get_schema(note)`、`get_agent_context(user)`，只输出成功状态，不打印正文。构建产物位于 `dist/stdio.js`。本地服务未启动时，工具返回 `SERVICE_UNAVAILABLE` 和中文启动说明。
 
@@ -33,4 +33,10 @@ codex mcp list -c 'mcp_servers.learning_workbench={command="/ABSOLUTE/PATH/TO/no
 
 v1.1：工具输入由 `src/domain/contracts.ts` 同时供本地服务和 MCP 校验。列表新增分页并默认返回摘要，完整正文通过详情取得；复盘和案例加入搜索。个人记录关联结果会随授权撤销而过滤。单次读取超过 2 MiB 时明确报错，需缩小列表范围或分段读取原文。
 
-本机 stdio 接口仍为 21 项。新增网页交接包、案例／复盘详情、备份上下文选项均为本地网页功能，没有扩张 MCP 写权限。客户端的其他文件或命令权限不受本工作台 MCP 勾选框约束；授权给外部模型的返回内容可能离开本机。
+v1.1 时 stdio 接口为 21 项；v1.2 已增加两个受限详情读取入口，当前共 23 项。网页交接包与备份上下文选项仍为本地网页功能，没有扩张 MCP 写权限。客户端的其他文件或命令权限不受本工作台 MCP 勾选框约束；授权给外部模型的返回内容可能离开本机。
+
+## v1.2 更新
+
+当前提供 **23 项工具**，新增 `get_case` 和 `get_review_result` 两个只读入口。实际 stdio 的“搜索 → 完整复盘/案例 → 原始记录/来源”链路由 `npm run test:habit-mcp` 在临时服务中验证；撤销任一源记录权限后不能继续读取整篇复盘，撤销资料库权限后案例读取被拒绝。写权限没有扩大。
+
+日期筛选需要本地日时，请发送带时区的起点 `from` 与下一日开始 `to_exclusive`，而非无时区日历字符串。完整合同见 `API_CONTRACT.md`。工作台方法资料不完整与接收 Agent 的实际 Skill 能力分开表述，执行端需自行核验自己的能力。

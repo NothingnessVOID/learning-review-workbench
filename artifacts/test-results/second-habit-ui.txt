@@ -1,0 +1,1 @@
+Habit UI cross-layer passed: B01 SQLite bookmark/fresh-context restore/short topic, B02 Asia/Singapore date inputs, B04 gated full comparison, B05 confirmed inverse link, B07 status DOM.

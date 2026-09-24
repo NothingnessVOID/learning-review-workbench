@@ -59,6 +59,11 @@ npx playwright install chromium
 npm run test:http
 npm run test:e2e
 node scripts/long-benchmark.mjs
+npm run test:habit-mcp
 ```
 
 新 HTTP 和 E2E 启动器自行建立临时端口及临时 DEMO 数据目录，并在退出时关闭自身服务。浏览器默认使用 Playwright 管理的 Chromium，也可设置 `PLAYWRIGHT_EXECUTABLE_PATH`。失败的浏览器测试保留截图与 trace；CI 上传它们作为构建产物。长文本基准测量真实 HTTP 和 stdio MCP 的返回字节与耗时，输入仍是合成演示数据，不是用户课程。
+
+## 第二轮复审入口
+
+以 `docs/SECOND_REVIEW.md` 为入口复核 B01–B09。特别检查真正的服务器续读、新浏览器上下文、本地日期边界、交接请求在途变更、完整旧正文与过期比较、确认关系两端一致、以及 stdio 查回原文。`artifacts/test-results/second-baseline.txt` 是固定旧提交上实际执行的失败日志，不能当作当前版本验收结果。主观体验与课程语义留作人工判断，工程保存和权限结果由自动测试说明。

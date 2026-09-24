@@ -1,0 +1,5 @@
+
+> learning-workbench@1.2.0 test:habit-mcp
+> node scripts/habit-mcp-test.mjs
+
+B08 passed: actual stdio search → full review/case → original notes/source; partial note revocation and library revocation enforced.

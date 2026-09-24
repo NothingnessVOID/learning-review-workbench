@@ -17,7 +17,7 @@ const service = new Service(dataDir, projectDir);
 const buildPath = join(projectDir, "dist", "build-info.json");
 const build = existsSync(buildPath)
   ? JSON.parse(readFileSync(buildPath, "utf8"))
-  : { version: "1.1.0", fingerprint: "development", commit: "unbuilt" };
+  : { version: "1.2.0", fingerprint: "development", commit: "unbuilt" };
 const instance = createHash("sha256")
   .update(resolve(dataDir) + ":" + port)
   .digest("hex")

@@ -1,0 +1,73 @@
+{
+  "runtime": "v26.0.0",
+  "platform": "darwin",
+  "fixture": "Synthetic: 3 long source versions; 300 long cards; 160 notes; 40 long reviews. No user materials.",
+  "results": [
+    {
+      "channel": "HTTP",
+      "tool": "list_courses",
+      "ms": 20.43,
+      "bytes": 2258
+    },
+    {
+      "channel": "HTTP",
+      "tool": "get_course",
+      "ms": 12.2,
+      "bytes": 7840
+    },
+    {
+      "channel": "HTTP",
+      "tool": "get_topic",
+      "ms": 165.11,
+      "bytes": 268600
+    },
+    {
+      "channel": "HTTP",
+      "tool": "get_source_excerpt",
+      "ms": 38.24,
+      "bytes": 9968
+    },
+    {
+      "channel": "HTTP",
+      "tool": "list_knowledge",
+      "ms": 68.4,
+      "bytes": 131144
+    },
+    {
+      "channel": "HTTP",
+      "tool": "list_notes",
+      "ms": 33.76,
+      "bytes": 19594
+    },
+    {
+      "channel": "HTTP",
+      "tool": "search_library",
+      "ms": 253.35,
+      "bytes": 18480
+    },
+    {
+      "channel": "MCP stdio",
+      "tool": "list_knowledge",
+      "ms": 309.2,
+      "bytes": 264982
+    },
+    {
+      "channel": "MCP stdio",
+      "tool": "list_notes",
+      "ms": 89.95,
+      "bytes": 40982
+    },
+    {
+      "channel": "MCP stdio",
+      "tool": "search_library",
+      "ms": 653.66,
+      "bytes": 79280
+    },
+    {
+      "channel": "MCP stdio",
+      "tool": "get_source_excerpt",
+      "ms": 80.54,
+      "bytes": 20892
+    }
+  ]
+}

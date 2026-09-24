@@ -76,10 +76,12 @@ export async function startTestServer({ seed = true, fixture } = {}) {
     await rm(dir, { recursive: true, force: true });
   };
   try {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 300; i++) {
       if (exited) throw Error(output);
       try {
-        const h = await (await fetch(base + "/health")).json();
+        const h = await (
+          await fetch(base + "/health", { signal: AbortSignal.timeout(1000) })
+        ).json();
         if (h.app === "learning-workbench") {
           const token = JSON.parse(
             await readFile(join(dir, "credentials.json"), "utf8"),

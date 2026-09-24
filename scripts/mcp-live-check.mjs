@@ -18,7 +18,7 @@ const transport = new StdioClientTransport({
 try {
   await client.connect(transport);
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 21);
+  assert.equal(listed.tools.length, 23);
   for (const [name, args] of [
     ["get_status", {}],
     ["get_schema", { entity_type: "note" }],

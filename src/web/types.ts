@@ -109,6 +109,7 @@ export type LearningState = {
     topic_id?: string;
     scroll?: number;
     block_id?: string;
+    teaching_block_id?: string;
     block_offset?: number;
   };
   updated_at: string;
@@ -126,6 +127,19 @@ export type Draft = {
   current?: unknown;
   proposed?: unknown;
   validation?: { warnings: string[]; errors: string[] };
+};
+export type DraftComparison = {
+  ready: boolean;
+  draft_id: string;
+  draft_revision: number;
+  entity_id: string;
+  current_revision: number;
+  current_topic_revisions: Record<string, number>;
+  comparison_token: string;
+  current_course: Course | null;
+  current_topics: Topic[];
+  proposed_course: Course;
+  proposed_topics: Topic[];
 };
 export type Permissions = {
   read_library: boolean;

@@ -1,0 +1,7 @@
+
+> learning-workbench@1.2.0 test:e2e
+> node scripts/e2e.mjs
+
+UI smoke passed: reading, source context, position, failure retry, timeline, archive restore, relation review, draft, export, import, 1280/768/390 screenshots.
+E01 computed contrast: .small-muted 5.38:1 rgb(83, 100, 89) on rgb(236, 238, 231); .course-date 5.77:1 rgb(83, 100, 89) on rgb(247, 245, 238); .row-kicker 6.00:1 rgb(82, 97, 87) on rgb(247, 245, 238); .row-summary 6.00:1 rgb(82, 97, 87) on rgb(247, 245, 238); .section-heading > span 6.00:1 rgb(82, 97, 87) on rgb(247, 245, 238); .eyebrow 4.84:1 rgb(164, 86, 61) on rgb(247, 245, 238)
+UI regression passed: R01 R02 U01 U04 U05 E02

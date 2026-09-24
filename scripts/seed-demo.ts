@@ -5,6 +5,21 @@ const dir = process.argv[2];
 if (!dir) throw Error("请指定独立演示数据目录");
 const service = new Service(resolve(dir), process.cwd());
 async function call(tool: string, args: any = {}) {
+  if (
+    tool === "review_draft" &&
+    args.action === "accept" &&
+    service.store.get("drafts", args.draft_id)?.entity_type === "course"
+  ) {
+    const comparison = await service.invoke("get_draft_comparison", {
+      draft_id: args.draft_id,
+    });
+    if (!comparison.ok || !(comparison.data as any).ready)
+      throw Error(JSON.stringify(comparison));
+    args = {
+      ...args,
+      comparison_token: (comparison.data as any).comparison_token,
+    };
+  }
   const r = await service.invoke(tool, args);
   if (!r.ok) throw Error(JSON.stringify(r.error));
   return r.data as any;

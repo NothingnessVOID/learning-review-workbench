@@ -51,6 +51,8 @@ export const sharedTools = [
   "search_library",
   "list_notes",
   "get_note",
+  "get_case",
+  "get_review_result",
   "list_drafts",
   "get_draft_status",
   "list_relations",
@@ -259,6 +261,17 @@ export class Service {
       web_path: `/#topic/${t.id}`,
     };
   }
+  teachingBlocks(topic: Obj): Obj[] {
+    return (topic.blocks ?? []).map((block: Obj, index: number) => ({
+      ...block,
+      id:
+        block.id ??
+        `tb_legacy_${sha(JSON.stringify([topic.id, index, block.type, block.body_md, block.source_refs ?? []])).slice(0, 24)}`,
+    }));
+  }
+  topicWithTeachingIds(topic: Obj): Obj {
+    return { ...topic, blocks: this.teachingBlocks(topic) };
+  }
   boundTopic(topic: Obj) {
     const chars = (topic.blocks ?? []).reduce(
       (n: number, b: Obj) => n + String(b.body_md ?? "").length,
@@ -300,6 +313,22 @@ export class Service {
     return /^\d{4}-\d{2}-\d{2}$/.test(s)
       ? `${s}T${name === "to" ? "23:59:59.999" : "00:00:00.000"}Z`
       : new Date(s).toISOString();
+  }
+  dateBounds(a: Obj) {
+    check(
+      !(a.to && a.to_exclusive),
+      "VALIDATION_ERROR",
+      "to 与 to_exclusive 不能同时提供。",
+    );
+    const from = this.dateBound(a.from, "from"),
+      to = this.dateBound(a.to, "to"),
+      end = this.dateBound(a.to_exclusive, "to_exclusive");
+    check(
+      !from || !(to || end) || Date.parse(from) <= Date.parse((to || end)!),
+      "VALIDATION_ERROR",
+      "开始日期不能晚于结束日期。",
+    );
+    return { from, to, end };
   }
   topicRevisionAtDraft(draft: Obj, topicId: string): number {
     if (draft.topic_revisions?.[topicId] !== undefined)
@@ -349,6 +378,59 @@ export class Service {
     );
     return expected;
   }
+  draftComparison(draft: Obj) {
+    check(
+      draft.entity_type === "course",
+      "VALIDATION_ERROR",
+      "完整正文比较仅用于课程草稿。",
+    );
+    const current = this.store.get("courses", draft.entity_id, false);
+    const currentTopics = current
+      ? this.courseTopics(current).map((topic) =>
+          this.topicWithTeachingIds(topic),
+        )
+      : [];
+    const proposedTopics = (draft.payload?.topics ?? []).map((topic: Obj) =>
+      this.topicWithTeachingIds(topic),
+    );
+    const currentTopicRevisions = Object.fromEntries(
+      currentTopics.map((topic) => [topic.id, topic.revision]),
+    );
+    const comparisonToken = sha(
+      JSON.stringify({
+        draft_id: draft.id,
+        draft_revision: draft.revision,
+        draft_status: draft.status,
+        proposed_hash: sha(JSON.stringify(draft.payload)),
+        current_revision: current?.revision ?? 0,
+        current_hash: current ? sha(JSON.stringify(current)) : null,
+        current_topic_hashes: currentTopics.map((topic) => [
+          topic.id,
+          topic.revision,
+          sha(JSON.stringify(topic)),
+        ]),
+      }),
+    );
+    const result = {
+      ready: true,
+      draft_id: draft.id,
+      draft_revision: draft.revision,
+      entity_id: draft.entity_id,
+      current_revision: current?.revision ?? 0,
+      current_topic_revisions: currentTopicRevisions,
+      comparison_token: comparisonToken,
+      current_course: current,
+      current_topics: currentTopics,
+      proposed_course: { ...draft.payload, topics: undefined },
+      proposed_topics: proposedTopics,
+    };
+    check(
+      Buffer.byteLength(JSON.stringify(result)) <= MAX_READ_RESULT_BYTES,
+      "PAYLOAD_TOO_LARGE",
+      "完整比较超过 2 MiB，无法安全审核；请缩小课程范围后重试，正文未被截断。",
+    );
+    return result;
+  }
   page<T>(items: T[], limitValue: unknown, cursorValue: unknown) {
     const limit = parse(
       z.coerce.number().int().min(1).max(100),
@@ -363,6 +445,9 @@ export class Service {
   }
   resolvedRelations(note: Obj, actor: Actor) {
     const ids = new Set<string>(note.relation_ids ?? []);
+    for (const other of this.store.all("notes"))
+      if (other.id !== note.id && (other.relation_ids ?? []).includes(note.id))
+        ids.add(other.id);
     for (const r of this.store.all("relations")) {
       if (r.status === "confirmed" && r.from_id === note.id) ids.add(r.to_id);
       if (r.status === "confirmed" && r.to_id === note.id) ids.add(r.from_id);
@@ -380,6 +465,8 @@ export class Service {
         )
           return null;
         if (found.table === "learning" && actor !== "local_user") return null;
+        if (found.table === "cases" && !this.caseVisible(found.value, actor))
+          return null;
         if (
           actor === "external_agent" &&
           !this.permissions.read_library &&
@@ -402,7 +489,7 @@ export class Service {
             `/#${({ courses: "course", topics: "topic", cards: "card", cases: "case", notes: "note", reviews: "review" } as Obj)[found.table] ?? "object"}/${id}`,
         };
       })
-      .filter(Boolean);
+      .filter((value): value is NonNullable<typeof value> => value !== null);
   }
   reviewHandoff(a: Obj, actor: Actor) {
     check(
@@ -415,12 +502,32 @@ export class Service {
         .object({
           note_id: id,
           related_note_ids: z.array(id).max(10).default([]),
+          review_ids: z.array(id).max(10).default([]),
+          feedback_note_ids: z.array(id).max(10).default([]),
           include_sources: z.boolean().default(false),
+          method_intent: z
+            .enum(["heijin_review", "general_review"])
+            .default("heijin_review"),
         })
         .strict(),
       a,
     );
     const note = this.store.get("notes", p.note_id)!;
+    check(
+      new Set(p.related_note_ids).size === p.related_note_ids.length,
+      "VALIDATION_ERROR",
+      "相关记录不能重复选择。",
+    );
+    check(
+      new Set(p.review_ids).size === p.review_ids.length,
+      "VALIDATION_ERROR",
+      "复盘不能重复选择。",
+    );
+    check(
+      new Set(p.feedback_note_ids).size === p.feedback_note_ids.length,
+      "VALIDATION_ERROR",
+      "后续反馈不能重复选择。",
+    );
     for (const relatedId of p.related_note_ids) {
       check(
         relatedId !== p.note_id,
@@ -436,32 +543,84 @@ export class Service {
     const relatedNotes = p.related_note_ids.map((i) =>
       this.store.get("notes", i)!,
     );
+    const selectedNoteIds = new Set([p.note_id, ...p.related_note_ids]);
+    const reviews = p.review_ids.map((reviewId) => {
+      const review = this.store.get("reviews", reviewId)!;
+      check(
+        (review.note_ids ?? []).length > 0 &&
+          review.note_ids.every((noteId: string) =>
+            selectedNoteIds.has(noteId),
+          ),
+        "VALIDATION_ERROR",
+        "所选复盘包含未选定的原始记录，请先明确选择。",
+      );
+      return review;
+    });
+    const feedbackNotes = p.feedback_note_ids.map((feedbackId) => {
+      const feedback = this.store.get("notes", feedbackId)!;
+      check(
+        feedback.type === "feedback" &&
+          selectedNoteIds.has(feedback.parent_note_id),
+        "VALIDATION_ERROR",
+        "所选后续反馈不属于当前记录集合。",
+      );
+      return feedback;
+    });
     const refs: Obj[] = [];
-    if (p.include_sources) {
-      const linkedIds = new Set<string>(note.relation_ids ?? []);
-      for (const n of relatedNotes)
-        for (const linked of n.relation_ids ?? []) linkedIds.add(linked);
+    const refKeys = new Set<string>();
+    {
+      const linkedIds = new Set<string>();
+      for (const selected of [note, ...relatedNotes, ...feedbackNotes])
+        for (const linked of this.resolvedRelations(selected, actor))
+          linkedIds.add(linked.id);
       for (const linkedId of linkedIds) {
         const found = this.store.find(linkedId);
         if (!found) continue;
-        const candidates = [
+        const candidates: Obj[] = [
           ...(found.value.source_refs ?? []),
           ...(found.value.blocks ?? []).flatMap(
             (b: Obj) => b.source_refs ?? [],
           ),
         ];
-        for (const ref of candidates)
-          if (!refs.some((x) => x.source_block_id === ref.source_block_id))
-            refs.push(ref);
+        if (found.table === "blocks")
+          candidates.push({
+            source_document_id: found.value.source_document_id,
+            source_version_id: found.value.source_version_id,
+            source_block_id: found.value.id,
+          });
+        if (found.table === "courses")
+          for (const versionId of found.value.source_version_ids ?? [])
+            for (const block of this.store
+              .all("blocks")
+              .filter((b) => b.source_version_id === versionId))
+              candidates.push({
+                source_document_id: block.source_document_id,
+                source_version_id: block.source_version_id,
+                source_block_id: block.id,
+              });
+        for (const ref of candidates) {
+          const fixed = {
+            source_document_id: ref.source_document_id,
+            source_version_id: ref.source_version_id,
+            source_block_id: ref.source_block_id,
+          };
+          const key = JSON.stringify(fixed);
+          if (!refKeys.has(key)) {
+            refKeys.add(key);
+            refs.push(fixed);
+          }
+        }
       }
+    }
+    if (p.include_sources) {
       check(
-        refs.length <= 50,
+        refs.length <= 10000,
         "PAYLOAD_TOO_LARGE",
-        "所选来源范围过大，请减少关联对象。",
+        "所选来源超过 10000 段，无法完整列出未附来源；请减少关联对象。",
       );
       this.references(refs);
     }
-    const excerpts = p.include_sources
+    const excerpts: Obj[] = p.include_sources
       ? refs.slice(0, 10).map((ref) => {
           const block = this.store.get("blocks", ref.source_block_id)!;
           const source = this.store.get("sources", ref.source_document_id)!;
@@ -470,29 +629,48 @@ export class Service {
             text: String(block.text).slice(0, 12000),
             title_path: block.title_path,
             source_name: source.original_name,
+            block_order: block.order,
+            line_start: block.line_start,
+            line_end: block.line_end,
             content_truncated: String(block.text).length > 12000,
           };
         })
       : [];
-    const context = readRuntimeContext(this.dir, this.projectDir, [
-      "review",
-      "heijin",
-    ]);
     return {
       note,
       related_notes: relatedNotes,
-      source_refs: refs,
+      reviews,
+      feedback_notes: feedbackNotes,
+      method_intent: p.method_intent,
+      source_refs: p.include_sources ? refs : [],
       source_excerpts: excerpts,
+      source_summary: {
+        total_refs: refs.length,
+        attached_count: excerpts.length,
+        omitted_refs: p.include_sources ? refs.slice(excerpts.length) : refs,
+        truncated_refs: excerpts
+          .filter((entry) => entry.content_truncated)
+          .map((entry) => ({
+            source_document_id: entry.source_document_id,
+            source_version_id: entry.source_version_id,
+            source_block_id: entry.source_block_id,
+          })),
+      },
       gaps: [
-        "通用上下文不包含完整专门方法 Skill；交接内容需由具备相应资料的执行端复核。",
+        "工作台只保存通用上下文；接收端须自行检查是否具备完整方法 Skill 与相应资料。",
       ],
       capabilities: {
         method_context_available: false,
+        workbench_has_full_method_skill: false,
+        receiver_capability: "verify_on_receiver",
         source_excerpt_limit: 10,
       },
       selected: {
         related_note_ids: p.related_note_ids,
+        review_ids: p.review_ids,
+        feedback_note_ids: p.feedback_note_ids,
         include_sources: p.include_sources,
+        method_intent: p.method_intent,
       },
     };
   }
@@ -502,8 +680,20 @@ export class Service {
       .filter(
         (n) =>
           this.canReadNote(n.id, actor) &&
-          (n.relation_ids ?? []).includes(objectId),
-      );
+          this.resolvedRelations(n, actor).some(
+            (linked: Obj) => linked.id === objectId,
+          ),
+      )
+      .map((n) => ({
+        ...n,
+        relation_ids: this.resolvedRelations(n, actor).map(
+          (linked: Obj) => linked.id,
+        ),
+        parent_note_id:
+          n.parent_note_id && this.canReadNote(n.parent_note_id, actor)
+            ? n.parent_note_id
+            : null,
+      }));
   }
   async dispatch(tool: string, a: Obj, actor: Actor): Promise<any> {
     if (actor === "external_agent") {
@@ -524,6 +714,7 @@ export class Service {
           "get_agent_context",
           "get_schema",
           "get_note",
+          "get_review_result",
           "list_notes",
         ].includes(tool)
       )
@@ -538,7 +729,7 @@ export class Service {
       case "get_status": {
         const counts = s.counts();
         return {
-          app_version: "1.1.0",
+          app_version: "1.2.0",
           schema_version: "1.0.0",
           data_dir: actor === "local_user" ? this.dir : undefined,
           counts: {
@@ -629,6 +820,7 @@ export class Service {
             source_version_count: (c.source_version_ids ?? []).length,
             overview: String(c.overview ?? "").slice(0, 360),
             content_truncated: String(c.overview ?? "").length > 360,
+            processing_status: c.processing_status ?? "unknown",
             verification_status: c.verification_status,
             created_at: c.created_at,
             updated_at: c.updated_at,
@@ -673,7 +865,7 @@ export class Service {
           a.revision,
         );
         return {
-          ...this.boundTopic(t),
+          ...this.boundTopic(this.topicWithTeachingIds(t)),
           web_path: `/#topic/${t.id}`,
           course: this.courseSummary(s.get("courses", t.course_id)!, actor),
           knowledge_cards: s
@@ -709,6 +901,7 @@ export class Service {
             body_md: String(c.body_md ?? "").slice(0, 360),
             body_preview: String(c.body_md ?? "").slice(0, 360),
             content_truncated: String(c.body_md ?? "").length > 360,
+            verification_status: c.verification_status ?? "unknown",
             summary_only: true,
             web_path: `/#card/${c.id}`,
           })),
@@ -784,9 +977,12 @@ export class Service {
           .filter((n) => this.canReadNote(n.id, actor));
         if (p.type) all = all.filter((n) => n.type === p.type);
         if (p.relation_id)
-          all = all.filter((n) => n.relation_ids.includes(p.relation_id));
-        const from = this.dateBound(p.from, "from"),
-          to = this.dateBound(p.to, "to");
+          all = all.filter((n) =>
+            this.resolvedRelations(n, actor).some(
+              (linked: Obj) => linked.id === p.relation_id,
+            ),
+          );
+        const { from, to, end } = this.dateBounds(p);
         if (from)
           all = all.filter(
             (n) =>
@@ -795,6 +991,10 @@ export class Service {
         if (to)
           all = all.filter(
             (n) => Date.parse(n.occurred_at ?? n.created_at) <= Date.parse(to),
+          );
+        if (end)
+          all = all.filter(
+            (n) => Date.parse(n.occurred_at ?? n.created_at) < Date.parse(end),
           );
         all.sort(
           (x, y) =>
@@ -851,7 +1051,13 @@ export class Service {
             .all("notes")
             .filter(
               (f) => f.parent_note_id === n.id && this.canReadNote(f.id, actor),
-            ),
+            )
+            .map((f) => ({
+              ...f,
+              relation_ids: this.resolvedRelations(f, actor).map(
+                (linked: Obj) => linked.id,
+              ),
+            })),
           relations: s
             .all("relations")
             .filter(
@@ -871,20 +1077,15 @@ export class Service {
         };
       }
       case "get_case": {
-        check(
-          actor === "local_user",
-          "PERMISSION_DENIED",
-          "案例详情仅在本地网页读取。",
-        );
         const item = s.get("cases", this.validateId(a.case_id))!;
+        check(
+          this.caseVisible(item, actor),
+          "PERMISSION_DENIED",
+          "该案例不在当前授权范围内。",
+        );
         return this.boundObject({ ...item, web_path: `/#case/${item.id}` });
       }
       case "get_review_result": {
-        check(
-          actor === "local_user",
-          "PERMISSION_DENIED",
-          "复盘详情仅在本地网页读取。",
-        );
         const item = s.get("reviews", this.validateId(a.review_id))!;
         for (const noteId of item.note_ids ?? [])
           check(
@@ -938,6 +1139,16 @@ export class Service {
           validation: { warnings: d.warnings ?? [], errors: [] },
           web_path: `/#draft/${d.id}`,
         };
+      }
+      case "get_draft_comparison": {
+        check(
+          actor === "local_user",
+          "PERMISSION_DENIED",
+          "完整草稿比较只能在本地网页审核。",
+        );
+        const input = parse(z.object({ draft_id: id }).strict(), a);
+        const draft = s.get("drafts", input.draft_id)!;
+        return this.draftComparison(draft);
       }
       case "list_relations": {
         const all = s
@@ -1074,6 +1285,7 @@ export class Service {
                 .object({
                   topic_id: id.optional(),
                   scroll: z.number().min(0).max(10000000).optional(),
+                  teaching_block_id: id.optional(),
                   block_id: id.optional(),
                   block_offset: z
                     .number()
@@ -1111,35 +1323,70 @@ export class Service {
               "阅读位置主题不属于所选知识卡。",
             );
         }
-        if (p.position?.block_id) {
-          const block = s.get("blocks", p.position.block_id)!;
-          const topicCandidates = p.position.topic_id
-            ? [s.get("topics", p.position.topic_id)!]
-            : target.table === "topics"
-              ? [target.value]
-              : target.table === "courses"
-                ? this.courseTopics(target.value)
-                : target.table === "cards"
-                  ? (target.value.topic_ids ?? [])
-                      .map((id: string) => s.get("topics", id, false))
-                      .filter(Boolean)
-                  : [];
-          const refIds: string[] = topicCandidates.flatMap((topic: Obj) =>
-            (topic.blocks ?? []).flatMap((b: Obj) =>
-              (b.source_refs ?? []).map((r: Obj) => r.source_block_id),
-            ),
+        let storedPosition: Obj = p.position ?? previous?.position ?? {};
+        const requestedAnchor =
+          p.position?.teaching_block_id ?? p.position?.block_id;
+        if (p.position?.teaching_block_id && p.position?.block_id)
+          check(
+            p.position.teaching_block_id === p.position.block_id,
+            "VALIDATION_ERROR",
+            "讲义锚点不能同时指定两个不同编号。",
           );
+        if (requestedAnchor) {
+          check(
+            ["courses", "topics", "cards"].includes(target.table),
+            "SOURCE_REF_INVALID",
+            "此对象没有讲义阅读锚点。",
+          );
+          const topicId =
+            p.position?.topic_id ??
+            (target.table === "topics" ? target.value.id : null);
+          check(
+            topicId,
+            "SOURCE_REF_INVALID",
+            "保存讲义锚点时须指定所属主题。",
+          );
+          const topic = s.get("topics", topicId)!;
+          if (target.table === "courses")
+            check(
+              topic.course_id === target.value.id,
+              "SOURCE_REF_INVALID",
+              "讲义锚点主题不属于所选课程。",
+            );
+          if (target.table === "topics")
+            check(
+              topic.id === target.value.id,
+              "SOURCE_REF_INVALID",
+              "讲义锚点主题与对象不匹配。",
+            );
           if (target.table === "cards")
-            refIds.push(
-              ...(target.value.source_refs ?? []).map(
-                (r: Obj) => r.source_block_id,
+            check(
+              (target.value.topic_ids ?? []).includes(topic.id),
+              "SOURCE_REF_INVALID",
+              "讲义锚点主题不属于所选知识卡。",
+            );
+          const teaching = this.teachingBlocks(topic);
+          let matched = teaching.find((block) => block.id === requestedAnchor);
+          if (
+            !matched &&
+            p.position?.block_id &&
+            !p.position.teaching_block_id
+          ) {
+            // V1 callers used block_id for a SourceBlock. Resolve it only through
+            // a real reference inside the selected topic, never by global ID.
+            matched = teaching.find((block) =>
+              (block.source_refs ?? []).some(
+                (ref: Obj) => ref.source_block_id === requestedAnchor,
               ),
             );
-          check(
-            refIds.includes(block.id),
-            "SOURCE_REF_INVALID",
-            "阅读位置段落不属于所选对象。",
-          );
+            if (matched) s.get("blocks", requestedAnchor);
+          }
+          check(matched, "SOURCE_REF_INVALID", "讲义锚点不属于指定主题。");
+          storedPosition = {
+            ...p.position,
+            topic_id: topic.id,
+            teaching_block_id: matched.id,
+          };
         }
         return s.tx(() =>
           s.put(
@@ -1148,7 +1395,7 @@ export class Service {
               id: p.object_id,
               object_id: p.object_id,
               status: p.status ?? previous?.status ?? "not_started",
-              position: p.position ?? previous?.position ?? {},
+              position: storedPosition,
             },
             p.expected_revision,
           ),
@@ -1465,6 +1712,7 @@ export class Service {
         (o.table !== "notes" || this.canReadNote(i, actor)) &&
         (o.table !== "reviews" ||
           o.value.note_ids.every((n: string) => this.canReadNote(n, actor))) &&
+        (o.table !== "cases" || this.caseVisible(o.value, actor)) &&
         (o.table !== "learning" || actor === "local_user")
       );
     });
@@ -1504,8 +1752,7 @@ export class Service {
       "case",
       "review",
     ];
-    const from = this.dateBound(p.from, "from"),
-      to = this.dateBound(p.to, "to");
+    const { from, to, end } = this.dateBounds(p);
     const results: Obj[] = [];
     for (const type of types) {
       check(map[type], "VALIDATION_ERROR", "搜索类型无效。");
@@ -1551,6 +1798,7 @@ export class Service {
             : (v.occurred_at ?? v.created_at);
         if (from && Date.parse(date) < Date.parse(from)) continue;
         if (to && Date.parse(date) > Date.parse(to)) continue;
+        if (end && Date.parse(date) >= Date.parse(end)) continue;
         const title =
           v.title ??
           v.original_name ??
@@ -1588,6 +1836,9 @@ export class Service {
         results.push({
           id: v.id,
           type,
+          occurred_at: v.occurred_at ?? null,
+          created_at: v.created_at,
+          date_basis: v.occurred_at ? "occurred_at" : "created_at",
           title,
           snippet,
           source:
@@ -1877,6 +2128,11 @@ export class Service {
           draft_id: id,
           action: z.enum(["accept", "reject", "revert"]),
           expected_revision: z.number().int().min(1),
+          comparison_token: z
+            .string()
+            .length(64)
+            .regex(/^[a-f0-9]+$/)
+            .optional(),
         })
         .strict(),
       a,
@@ -1961,6 +2217,13 @@ export class Service {
         "REVISION_CONFLICT",
         "正式资料在草稿提交后发生更新，请重新整理。",
       );
+      if (table === "courses")
+        check(
+          p.comparison_token &&
+            p.comparison_token === this.draftComparison(d).comparison_token,
+          "REVISION_CONFLICT",
+          "课程比较快照缺失或已过期，请重新打开完整差异后确认。",
+        );
       const v = d.payload;
       let saved: Obj;
       let oldTopics: Obj[] = [];

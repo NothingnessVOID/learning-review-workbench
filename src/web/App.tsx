@@ -10,6 +10,8 @@ import remarkGfm from "remark-gfm";
 import { downloadUrl, messageOf, requestId, rpc } from "./api";
 import { normalizeExportParams, usePersistentDraft } from "./drafts";
 import { readableChanges } from "./diff";
+import { handoffMarkdown, sameHandoffSelection } from "./handoff";
+import type { HandoffResult, HandoffSelection } from "./handoff";
 import {
   captureReaderPosition,
   chooseReaderPosition,
@@ -17,10 +19,12 @@ import {
   saveReaderOnPageHide,
   saveReaderPosition,
 } from "./reading";
+import { changeReviewLinks, reviewNoteIds } from "./review-draft";
 import type {
   Card,
   Course,
   Draft,
+  DraftComparison,
   LearningState,
   Note,
   Permissions,
@@ -307,7 +311,11 @@ function usePagedRpc<T>(
   };
 }
 
-function useDialogFocus(open: boolean, onClose: () => void) {
+function useDialogFocus(
+  open: boolean,
+  onClose: () => void,
+  initialFocusSelector?: string,
+) {
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -332,7 +340,13 @@ function useDialogFocus(open: boolean, onClose: () => void) {
           'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
         ),
       ).filter((el) => !el.inert && el.getClientRects().length > 0);
-    (focusable()[0] || dialog).focus();
+    const initial = initialFocusSelector
+      ? dialog.querySelector<HTMLElement>(initialFocusSelector)
+      : null;
+    (initial && initial.getClientRects().length > 0
+      ? initial
+      : focusable()[0] || dialog
+    ).focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -375,8 +389,10 @@ export default function App() {
   const menuRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const [composerOpen, setComposerOpen] = useState(false);
-  const composerDialogRef = useDialogFocus(composerOpen, () =>
-    setComposerOpen(false),
+  const composerDialogRef = useDialogFocus(
+    composerOpen,
+    () => setComposerOpen(false),
+    "#quick-text",
   );
   const {
     draft: composer,
@@ -422,7 +438,9 @@ export default function App() {
         void saveReaderPosition(
           reader.dataset.courseReader,
           captureReaderPosition(reader.dataset.topicReader),
-        ).catch(() => {});
+        ).catch(() => {
+          setNotice("阅读位置已留在本机，暂未同步到资料库；下次阅读会重试。");
+        });
       setRoute(routeFromHash());
       setDrawer(false);
     };
@@ -449,7 +467,7 @@ export default function App() {
       `${fontSize}px`,
     );
   }, [fontSize]);
-  const openQuick = () => {
+  const openQuick = (intent: "quick" | "understanding" = "quick") => {
     const current = composerRef.current;
     if (!current.text && !current.relationDismissed) {
       const related =
@@ -460,6 +478,7 @@ export default function App() {
         : "";
       setComposer({
         ...current,
+        type: intent,
         relationId: related ? route.id! : "",
         relationLabel: title,
         relationDismissed: false,
@@ -615,7 +634,7 @@ export default function App() {
               ⌕
             </button>
           </form>
-          <button className="top-action" onClick={openQuick}>
+          <button className="top-action" onClick={() => openQuick()}>
             ＋ <span>记一句</span>
           </button>
         </header>
@@ -632,7 +651,7 @@ export default function App() {
               key={`${route.id}-${change}`}
               id={route.id}
               notify={notify}
-              openComposer={openQuick}
+              openComposer={() => openQuick("understanding")}
             />
           )}
           {route.page === "knowledge" && <Knowledge key={change} />}
@@ -641,7 +660,7 @@ export default function App() {
               key={`${route.id}-${change}`}
               id={route.id}
               notify={notify}
-              openComposer={openQuick}
+              openComposer={() => openQuick("understanding")}
             />
           )}
           {route.page === "notes" && <Notes key={change} />}
@@ -1011,7 +1030,7 @@ function Courses({ notify }: { notify: (s: string) => void }) {
               </span>
             </span>
             <span className="course-tail">
-              <Pill>{course.processing_status}</Pill>
+              <Pill>{course.processing_status || "整理状态未提供"}</Pill>
               <span className="arrow">↗</span>
             </span>
           </button>
@@ -1075,8 +1094,8 @@ function CoursePage({
         description={course.overview || "课程概览尚待整理"}
         aside={
           <div className="status-stack">
-            <Pill>{course.processing_status}</Pill>
-            <Pill>{course.verification_status}</Pill>
+            <Pill>{course.processing_status || "整理状态未提供"}</Pill>
+            <Pill>{course.verification_status || "核验状态未提供"}</Pill>
           </div>
         }
       />
@@ -1232,6 +1251,7 @@ function TopicPage({
   const [activeRef, setActiveRef] = useState<SourceRef | null>(null);
   const [busy, setBusy] = useState(false);
   const [scrollState, setScrollState] = useState<LearningState | null>(null);
+  const [positionError, setPositionError] = useState("");
   useEffect(() => {
     if (topic) setScrollState(topic.learning_state || null);
   }, [topic]);
@@ -1254,10 +1274,13 @@ function TopicPage({
     let restored = false;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     const persist = () =>
-      saveReaderPosition(
-        topic.course_id,
-        captureReaderPosition(topic.id),
-      ).catch(() => {});
+      saveReaderPosition(topic.course_id, captureReaderPosition(topic.id))
+        .then(() => setPositionError(""))
+        .catch(() =>
+          setPositionError(
+            "阅读位置已留在本机，暂未同步到资料库。可点此重试。",
+          ),
+        );
     const restore = setTimeout(() => {
       restoreReaderPosition(
         chooseReaderPosition(topic.course_id, topic.course?.learning_state),
@@ -1293,7 +1316,11 @@ function TopicPage({
           saveReaderPosition(topic.course_id, {
             topic_id: topic.id,
             scroll: 0,
-          }).catch(() => {});
+          }).catch(() =>
+            setPositionError(
+              "阅读位置已留在本机，暂未同步到资料库。可点此重试。",
+            ),
+          );
       }
     };
   }, [topic?.id]);
@@ -1334,6 +1361,26 @@ function TopicPage({
         title={topic.title}
         description={topic.course?.title}
       />
+      {positionError && (
+        <div className="warning" role="status">
+          {positionError}{" "}
+          <button
+            className="text-button"
+            onClick={() => {
+              if (topic)
+                void saveReaderPosition(
+                  topic.course_id,
+                  captureReaderPosition(topic.id),
+                ).then(
+                  () => setPositionError(""),
+                  () => setPositionError("重试未成功，位置仍保存在本机。"),
+                );
+            }}
+          >
+            重试同步
+          </button>
+        </div>
+      )}
       <details className="inline-topic-map">
         <summary>
           本课主题目录 ·{" "}
@@ -1374,7 +1421,7 @@ function TopicPage({
               <section
                 className="teaching-block"
                 key={block.id}
-                data-reader-block={block.id}
+                data-teaching-block-id={block.id}
               >
                 <div className="block-label">{blockType(block.type)}</div>
                 <div
@@ -1713,7 +1760,9 @@ function Knowledge() {
                 : card.aliases?.join("、") || "查看资料与出处"}
             </p>
             <span className="card-bottom">
-              {humanLabel(card.verification_status)}
+              {card.verification_status
+                ? humanLabel(card.verification_status)
+                : "核验状态未提供"}
               <span>阅读 ↗</span>
             </span>
           </button>
@@ -1766,7 +1815,11 @@ function CardPage({
         <article className="reading-paper">
           <div className="reading-meta">
             <Pill>资料整理层</Pill>
-            <span>{humanLabel(card.verification_status)}</span>
+            <span>
+              {card.verification_status
+                ? humanLabel(card.verification_status)
+                : "核验状态未提供"}
+            </span>
           </div>
           {card.original_name && (
             <p className="source-name">原名：{card.original_name}</p>
@@ -1904,12 +1957,19 @@ function Notes() {
             onClick={() => go(`note/${note.id}`)}
             key={note.id}
           >
-            <span className="timeline-date">{dateLabel(note.created_at)}</span>
+            <span className="timeline-date">
+              {note.occurred_at
+                ? `发生：${dateLabel(note.occurred_at)}`
+                : `写入：${dateLabel(note.created_at)}`}
+            </span>
             <span className="timeline-body">
               <small>
                 {noteTypes[note.type] || note.type} · 私人
                 {note.archived ? " · 已归档" : ""}
                 {note.content_truncated ? " · 摘录，点开看全文" : ""}
+                {note.occurred_at
+                  ? ` · 写入于 ${dateLabel(note.created_at)}`
+                  : " · 发生时间未记录"}
               </small>
               <strong>{note.original_text}</strong>
               <span>查看原话与后续 ↗</span>
@@ -1956,6 +2016,8 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     method: "",
     version: "",
     gaps: "",
+    linkSelectedNotes: false,
+    linkedNoteIds: [] as string[],
     requestId: requestId(),
   }));
   const [busy, setBusy] = useState("");
@@ -1965,6 +2027,69 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     "feedback" | "review" | null
   >(null);
   const [selectedRelated, setSelectedRelated] = useState<string[]>([]);
+  const [selectedReviews, setSelectedReviews] = useState<string[]>([]);
+  const [selectedFeedback, setSelectedFeedback] = useState<string[]>([]);
+  const [relatedDetails, setRelatedDetails] = useState<Record<string, Note>>(
+    {},
+  );
+  const [relatedDetailsError, setRelatedDetailsError] = useState("");
+  const [relatedDetailsLoading, setRelatedDetailsLoading] = useState(false);
+  const [relatedDetailsVersion, setRelatedDetailsVersion] = useState(0);
+  const relatedSelectionKey = JSON.stringify(selectedRelated);
+  useEffect(() => {
+    let active = true;
+    setRelatedDetails({});
+    setRelatedDetailsError("");
+    if (!selectedRelated.length) {
+      setRelatedDetailsLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setRelatedDetailsLoading(true);
+    Promise.all(
+      selectedRelated.map((noteId) =>
+        rpc<Note>("get_note", { note_id: noteId }),
+      ),
+    )
+      .then((details) => {
+        if (active)
+          setRelatedDetails(
+            Object.fromEntries(details.map((detail) => [detail.id, detail])),
+          );
+      })
+      .catch((error) => {
+        if (active) setRelatedDetailsError(messageOf(error));
+      })
+      .finally(() => {
+        if (active) setRelatedDetailsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id, relatedSelectionKey, relatedDetailsVersion]);
+  const noteScope = [
+    note,
+    ...selectedRelated.map((noteId) => relatedDetails[noteId]),
+  ].filter((item): item is Note => !!item);
+  const reviewOptions = [
+    ...new Map(
+      noteScope
+        .flatMap((item) => item.reviews || [])
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const feedbackOptions = [
+    ...new Map(
+      noteScope
+        .flatMap((item) => item.followups || [])
+        .filter((item) => item.type === "feedback")
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const [methodIntent, setMethodIntent] = useState<
+    "heijin_review" | "general_review"
+  >("general_review");
   const [relatedQuery, setRelatedQuery] = useState("");
   const relatedList = usePagedRpc<Note>("list_notes", { limit: 30 });
   const relatedSearch = usePagedRpc<{
@@ -1978,43 +2103,66 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
   );
   const relatedOptions = relatedQuery.trim() ? relatedSearch : relatedList;
   const [includeSources, setIncludeSources] = useState(false);
-  const [handoff, setHandoff] = useState<any>(null);
+  const [handoff, setHandoff] = useState<HandoffResult | null>(null);
+  const [handoffAtResult, setHandoffAtResult] = useState<{
+    generation: number;
+    selection: HandoffSelection;
+  } | null>(null);
+  const handoffGeneration = useRef(0);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [handoffError, setHandoffError] = useState("");
+  const invalidateHandoff = () => {
+    handoffGeneration.current++;
+    setHandoff(null);
+    setHandoffAtResult(null);
+    setHandoffBusy(false);
+    setHandoffError("");
+  };
+  useEffect(() => {
+    invalidateHandoff();
+    return () => {
+      handoffGeneration.current++;
+    };
+  }, [id, note?.revision, note?.updated_at]);
+  const handoffSelection = (): HandoffSelection => ({
+    note_id: id,
+    related_note_ids: [...selectedRelated],
+    review_ids: [...selectedReviews],
+    feedback_note_ids: [...selectedFeedback],
+    include_sources: includeSources,
+    method_intent: methodIntent,
+  });
   const makeHandoff = async () => {
+    const selection = handoffSelection();
+    const generation = ++handoffGeneration.current;
     setHandoffBusy(true);
     setHandoffError("");
     setHandoff(null);
+    setHandoffAtResult(null);
     try {
-      setHandoff(
-        await rpc("get_review_handoff", {
-          note_id: id,
-          related_note_ids: selectedRelated,
-          include_sources: includeSources,
-        }),
-      );
+      const result = await rpc<HandoffResult>("get_review_handoff", selection);
+      if (generation !== handoffGeneration.current) return;
+      if (!sameHandoffSelection(selection, result))
+        throw new Error("交接结果与所选范围不一致，请重新生成。");
+      setHandoff(result);
+      setHandoffAtResult({ generation, selection });
     } catch (e) {
-      setHandoffError(messageOf(e));
+      if (generation === handoffGeneration.current)
+        setHandoffError(messageOf(e));
     } finally {
-      setHandoffBusy(false);
+      if (generation === handoffGeneration.current) setHandoffBusy(false);
     }
   };
-  const handoffText = handoff
-    ? [
-        "# 个人复盘交接（请先阅读边界）",
-        "以下是用户选定的原始记录。请保留原话，不假设缺失的方法或个人动机；不具备完整方法资料时只作一般整理。复盘结果请由用户检查后独立归档。",
-        `\n## 当前记录 ${handoff.note?.id || id}\n${handoff.note?.original_text || ""}`,
-        ...(handoff.related_notes || []).map(
-          (item: Note) => `\n## 选定相关记录 ${item.id}\n${item.original_text}`,
-        ),
-        ...(handoff.source_excerpts || []).map(
-          (item: any) =>
-            `\n## 来源 ${item.source_name || "原文"} ${item.title_path || ""}\n${item.text || ""}`,
-        ),
-        `\n## 资料缺口\n${(handoff.gaps || []).length ? handoff.gaps.map((gap: string) => `- ${gap}`).join("\n") : "- 无额外缺口说明"}`,
-        `\n方法资料可用：${handoff.capabilities?.method_context_available ? "是" : "否。请勿声称完整使用该方法。"}`,
-      ].join("\n")
-    : "";
+  const handoffValid =
+    !!handoff &&
+    !!handoffAtResult &&
+    handoffAtResult.generation === handoffGeneration.current &&
+    JSON.stringify(handoffAtResult.selection) ===
+      JSON.stringify(handoffSelection());
+  const handoffText =
+    handoffValid && handoff && handoffAtResult
+      ? handoffMarkdown(handoff, handoffAtResult.selection)
+      : "";
   const saveFeedback = async () => {
     const submitted = feedbackRef.current;
     if (!submitted.text.trim() || busyRef.current) return;
@@ -2048,8 +2196,9 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     setBusy("review");
     setWriteError("");
     try {
+      const noteIds = reviewNoteIds(id, submitted);
       await rpc("save_review_result", {
-        note_ids: [id],
+        note_ids: noteIds,
         body_md: submitted.text.trim(),
         method_name: submitted.method.trim() || undefined,
         method_version: submitted.version?.trim() || undefined,
@@ -2097,7 +2246,7 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
         ← 返回我的记录
       </button>
       <PageHead
-        eyebrow={`${noteTypes[note.type] || note.type} · ${dateLabel(note.created_at)}`}
+        eyebrow={`${noteTypes[note.type] || note.type} · ${note.occurred_at ? `发生于 ${dateLabel(note.occurred_at)}` : `写入于 ${dateLabel(note.created_at)}，发生时间未记录`}`}
         title="一条真实的记录"
         description="原话、整理结果和后来发生的事，按时间留在一起。"
       />
@@ -2109,7 +2258,11 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
           </span>
           <p>{note.original_text}</p>
           <span className="small-muted">
-            仅自己可见 · {new Date(note.created_at).toLocaleString("zh-CN")}
+            仅自己可见 · 写入于{" "}
+            {new Date(note.created_at).toLocaleString("zh-CN")}
+            {note.occurred_at
+              ? ` · 发生于 ${new Date(note.occurred_at).toLocaleString("zh-CN")}`
+              : " · 发生时间未记录"}
           </span>
         </section>
         {note.resolved_relations?.length || note.relations?.length ? (
@@ -2172,12 +2325,37 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
                         selectedRelated.length >= 10
                       }
                       onChange={(e) => {
-                        setHandoff(null);
-                        setSelectedRelated((current) =>
-                          e.target.checked
-                            ? [...current, item.id]
-                            : current.filter((value) => value !== item.id),
+                        invalidateHandoff();
+                        const next = e.target.checked
+                          ? [...selectedRelated, item.id]
+                          : selectedRelated.filter(
+                              (value) => value !== item.id,
+                            );
+                        setSelectedRelated(next);
+                        const allowed = new Set([id, ...next]);
+                        setSelectedReviews((current) =>
+                          current.filter((reviewId) =>
+                            reviewOptions
+                              .find((review) => review.id === reviewId)
+                              ?.note_ids.every((noteId) => allowed.has(noteId)),
+                          ),
                         );
+                        setSelectedFeedback((current) =>
+                          current.filter((feedbackId) => {
+                            const candidate = feedbackOptions.find(
+                              (item) => item.id === feedbackId,
+                            );
+                            return (
+                              !!candidate &&
+                              !!candidate.parent_note_id &&
+                              allowed.has(candidate.parent_note_id)
+                            );
+                          }),
+                        );
+                        if (reviewRef.current.linkSelectedNotes)
+                          setReview((current) =>
+                            changeReviewLinks(current, next, true, requestId()),
+                          );
                       }}
                     />
                     {("original_text" in item
@@ -2205,17 +2383,111 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             <p className="small-muted">
               已选 {selectedRelated.length} 条；只会附上你勾选的记录。
             </p>
+            {relatedDetailsLoading && (
+              <p className="small-muted" role="status">
+                正在读取已选记录的先前复盘与反馈…
+              </p>
+            )}
+            {relatedDetailsError && (
+              <ErrorBox
+                error={`相关记录的历史读取失败：${relatedDetailsError}`}
+                retry={() => setRelatedDetailsVersion((value) => value + 1)}
+              />
+            )}
           </fieldset>
           <label className="check-row">
             <input
               type="checkbox"
               checked={includeSources}
               onChange={(e) => {
-                setHandoff(null);
+                invalidateHandoff();
                 setIncludeSources(e.target.checked);
               }}
             />
             附上可定位的来源原文
+          </label>
+          <fieldset>
+            <legend>先前复盘（明确勾选才附上，最多 10 条）</legend>
+            {reviewOptions.length ? (
+              reviewOptions.map((previous) => {
+                const allowed = previous.note_ids.every(
+                  (noteId) => noteId === id || selectedRelated.includes(noteId),
+                );
+                return (
+                  <label className="check-row" key={previous.id}>
+                    <input
+                      type="checkbox"
+                      checked={selectedReviews.includes(previous.id)}
+                      disabled={
+                        !allowed ||
+                        (!selectedReviews.includes(previous.id) &&
+                          selectedReviews.length >= 10)
+                      }
+                      onChange={(e) => {
+                        invalidateHandoff();
+                        setSelectedReviews((current) =>
+                          e.target.checked
+                            ? [...current, previous.id]
+                            : current.filter((value) => value !== previous.id),
+                        );
+                      }}
+                    />
+                    {dateLabel(previous.created_at)} ·{" "}
+                    {previous.body_md.slice(0, 90)}
+                    {!allowed ? "（先选其关联记录）" : ""}
+                  </label>
+                );
+              })
+            ) : (
+              <p className="small-muted">暂无先前复盘。</p>
+            )}
+          </fieldset>
+          <fieldset>
+            <legend>后续反馈（明确勾选才附上，最多 10 条）</legend>
+            {feedbackOptions.length ? (
+              feedbackOptions.map((followup) => (
+                <label className="check-row" key={followup.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFeedback.includes(followup.id)}
+                    disabled={
+                      !selectedFeedback.includes(followup.id) &&
+                      selectedFeedback.length >= 10
+                    }
+                    onChange={(e) => {
+                      invalidateHandoff();
+                      setSelectedFeedback((current) =>
+                        e.target.checked
+                          ? [...current, followup.id]
+                          : current.filter((value) => value !== followup.id),
+                      );
+                    }}
+                  />
+                  {dateLabel(followup.occurred_at || followup.created_at)} ·{" "}
+                  {followup.original_text.slice(0, 90)}
+                </label>
+              ))
+            ) : (
+              <p className="small-muted">暂无后续反馈。</p>
+            )}
+          </fieldset>
+          <label className="field">
+            本次复盘意图
+            <select
+              aria-label="复盘意图"
+              value={methodIntent}
+              onChange={(e) => {
+                invalidateHandoff();
+                setMethodIntent(
+                  e.target.value as "heijin_review" | "general_review",
+                );
+              }}
+            >
+              <option value="general_review">一般整理与复盘</option>
+              <option value="heijin_review">
+                希望按黑金方法复盘（接收端需核验 Skill）
+              </option>
+            </select>
           </label>
           <button
             className="secondary"
@@ -2227,30 +2499,47 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
           {handoffError && (
             <ErrorBox error={handoffError} retry={makeHandoff} />
           )}
-          {handoff && (
+          {handoffValid && handoff && handoffAtResult && (
             <div className="preview-box">
               <h3>发送前核对</h3>
               <p className="small-muted">
-                当前记录 1 条 · 选定相关记录{" "}
-                {handoff.related_notes?.length || 0} 条 · 来源片段{" "}
-                {handoff.source_excerpts?.length || 0} 段
+                当前记录 {handoffAtResult.selection.note_id} · 选定相关记录{" "}
+                {handoff.related_notes?.length || 0} 条 · 先前复盘{" "}
+                {handoff.reviews?.length || 0} 条 · 后续反馈{" "}
+                {handoff.feedback_notes?.length || 0} 条 · 来源{" "}
+                {handoff.source_summary?.attached_count ??
+                  handoff.source_excerpts?.length ??
+                  0}
+                /
+                {handoff.source_summary?.total_refs ??
+                  handoff.source_refs?.length ??
+                  0}{" "}
+                段
               </p>
               <pre className="handoff-preview">{handoffText}</pre>
               <div className="review-actions">
                 <button
                   className="primary"
-                  onClick={() =>
+                  onClick={() => {
+                    if (
+                      handoffAtResult.generation !== handoffGeneration.current
+                    )
+                      return notify("选择已改变，请重新生成交接预览。");
                     navigator.clipboard.writeText(handoffText).then(
                       () => notify("交接内容已复制，请在 Agent 中粘贴并核对"),
                       () => notify("复制未成功，可下载交接文件"),
-                    )
-                  }
+                    );
+                  }}
                 >
                   复制交接内容
                 </button>
                 <button
                   className="secondary"
                   onClick={() => {
+                    if (
+                      handoffAtResult.generation !== handoffGeneration.current
+                    )
+                      return notify("选择已改变，请重新生成交接预览。");
                     const url = URL.createObjectURL(
                       new Blob([handoffText], {
                         type: "text/markdown;charset=utf-8",
@@ -2258,7 +2547,7 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
                     );
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = `复盘交接-${id}.md`;
+                    a.download = `复盘交接-${handoffAtResult.selection.note_id}.md`;
                     a.click();
                     setTimeout(() => URL.revokeObjectURL(url), 1000);
                   }}
@@ -2298,7 +2587,8 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             onClick={() => go(`note/${f.id}`)}
           >
             <span className="eyebrow">
-              后续反馈 · {dateLabel(f.created_at)}
+              {f.type === "feedback" ? "后续反馈" : "后续记录"} ·{" "}
+              {dateLabel(f.occurred_at || f.created_at)}
             </span>
             <p>{f.original_text}</p>
             <span className="small-muted">查看这条记录 ↗</span>
@@ -2410,10 +2700,41 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             placeholder="资料缺口或待核问题，每行一项（可留空）"
             aria-label="资料缺口或待核问题"
           />
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={review.linkSelectedNotes || false}
+              disabled={!selectedRelated.length && !review.linkSelectedNotes}
+              onChange={(e) =>
+                setReview((current) =>
+                  changeReviewLinks(
+                    current,
+                    selectedRelated,
+                    e.target.checked,
+                    requestId(),
+                  ),
+                )
+              }
+            />
+            本次复盘同时回连交接中已选的{" "}
+            {review.linkSelectedNotes
+              ? review.linkedNoteIds?.length || 0
+              : selectedRelated.length}{" "}
+            条相关记录（可选）
+          </label>
+          {review.linkSelectedNotes && !!review.linkedNoteIds?.length && (
+            <p className="small-muted">
+              保存时会回连：{review.linkedNoteIds.join("、")}
+            </p>
+          )}
           <div className="entry-action">
             <button
               className="primary"
-              disabled={busy !== "" || !review.text.trim()}
+              disabled={
+                busy !== "" ||
+                !review.text.trim() ||
+                (review.linkSelectedNotes && !review.linkedNoteIds?.length)
+              }
               onClick={saveReview}
             >
               保存这次复盘
@@ -2640,6 +2961,31 @@ function DraftContent({
     </div>
   );
 }
+function comparisonReadyForDraft(
+  draft: Draft,
+  comparison: DraftComparison | null,
+) {
+  if (draft.entity_type !== "course") return true;
+  return !!(
+    comparison?.ready &&
+    comparison.draft_id === draft.id &&
+    comparison.draft_revision === draft.revision &&
+    comparison.entity_id === draft.entity_id &&
+    comparison.comparison_token &&
+    !!comparison.proposed_course &&
+    Array.isArray(comparison.current_topics) &&
+    Array.isArray(comparison.proposed_topics) &&
+    comparison.current_topics.every(
+      (topic) =>
+        Array.isArray(topic.blocks) &&
+        comparison.current_topic_revisions?.[topic.id] === topic.revision,
+    ) &&
+    comparison.proposed_topics.every((topic) => Array.isArray(topic.blocks)) &&
+    (comparison.current_course
+      ? comparison.current_course.revision === comparison.current_revision
+      : comparison.current_revision === 0)
+  );
+}
 function DraftPage({
   id,
   notify,
@@ -2653,21 +2999,29 @@ function DraftPage({
     loading,
     refresh,
   } = useRemote<Draft>("get_draft_status", { draft_id: id }, []);
-  const existing = useRemote<Course>(
-    "get_course",
-    { course_id: draft?.entity_id || "" },
-    [draft?.entity_id],
-    !!draft?.current && draft.entity_type === "course",
+  const comparison = useRemote<DraftComparison>(
+    "get_draft_comparison",
+    { draft_id: id },
+    [draft?.revision],
+    draft?.entity_type === "course",
   );
   const [busy, setBusy] = useState(false);
   const run = async (action: "accept" | "reject" | "revert") => {
     if (!draft) return;
+    const courseReady = comparisonReadyForDraft(draft, comparison.data);
+    if (action === "accept" && !courseReady) {
+      notify("完整版本比较尚未就绪，无法确认采用。");
+      return;
+    }
     setBusy(true);
     try {
       await rpc("review_draft", {
         draft_id: draft.id,
         action,
         expected_revision: draft.revision,
+        ...(action === "accept" && draft.entity_type === "course"
+          ? { comparison_token: comparison.data!.comparison_token }
+          : {}),
       });
       refresh();
       notify(
@@ -2679,17 +3033,74 @@ function DraftPage({
       );
     } catch (e) {
       notify(messageOf(e));
+      if (action === "accept" && draft.entity_type === "course")
+        comparison.refresh();
     } finally {
       setBusy(false);
     }
   };
   if (error) return <ErrorBox error={error} retry={refresh} />;
   if (loading || !draft) return <p className="muted">正在读取差异…</p>;
+  const comparisonReady = comparisonReadyForDraft(draft, comparison.data);
+  if (!comparisonReady)
+    return (
+      <>
+        <button className="back" onClick={() => go("drafts")}>
+          ← 返回草稿
+        </button>
+        <PageHead
+          eyebrow="草稿审核 · 完整版本比较"
+          title={(draft.payload as any)?.title || "待核变更"}
+          description="正在读取绑定修订号的旧讲义与拟采用正文。读取完整前不能确认采用。"
+        />
+        {comparison.error ? (
+          <ErrorBox
+            error={`完整比较不可用：${comparison.error}`}
+            retry={comparison.refresh}
+          />
+        ) : (
+          <p className="muted" role="status">
+            {comparison.loading
+              ? "正在读取旧讲义全文与来源…"
+              : "完整比较尚未就绪，请重试。"}
+          </p>
+        )}
+        {draft.status === "draft" && (
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => run("reject")}
+          >
+            拒绝草稿
+          </button>
+        )}
+        {draft.status === "accepted" && (
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => run("revert")}
+          >
+            撤回采用
+          </button>
+        )}
+      </>
+    );
   const current =
     draft.entity_type === "course"
-      ? existing.data || draft.current
+      ? comparison.data!.current_course
+        ? {
+            ...comparison.data!.current_course,
+            topics: comparison.data!.current_topics,
+          }
+        : null
       : draft.current;
-  const proposed = draft.proposed || draft.payload;
+  const proposed =
+    draft.entity_type === "course"
+      ? {
+          ...comparison.data!.proposed_course,
+          topics: comparison.data!.proposed_topics,
+        }
+      : draft.proposed || draft.payload;
   const changes = readableChanges(current, proposed, draft.entity_type);
   return (
     <>
@@ -2709,6 +3120,14 @@ function DraftPage({
           待核：{draft.validation.warnings.join("；")}
         </div>
       ) : null}
+      {draft.entity_type === "course" && (
+        <p className="small-muted">
+          已读取绑定修订的完整比较：草稿修订 {comparison.data!.draft_revision} ·
+          当前课程修订 {comparison.data!.current_revision ?? "新课程"} · 旧主题{" "}
+          {comparison.data!.current_topics.length} 个 · 拟采用主题{" "}
+          {comparison.data!.proposed_topics.length} 个。
+        </p>
+      )}
       <section
         className="paper-block change-summary"
         aria-label="这次拟改变的内容"

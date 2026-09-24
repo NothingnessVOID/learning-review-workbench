@@ -18,6 +18,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:http
       - run: npm run test:e2e
+      - run: npm run test:habit-mcp
+      - run: node scripts/habit-ui-test.mjs
+      - run: node scripts/handoff-ui-test.mjs
       - run: node scripts/long-benchmark.mjs
       - uses: actions/upload-artifact@v4
         if: always()
@@ -26,4 +29,6 @@ jobs:
           path: |
             artifacts/screenshots/
             artifacts/ui-regression/
+            artifacts/habit-regression/
+            artifacts/handoff-regression/
             artifacts/test-results/

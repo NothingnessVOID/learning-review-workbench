@@ -44,9 +44,11 @@ test("M02: service, HTTP, and official MCP SDK enforce the same strict read inpu
   });
   try {
     let ready = false;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 300; i++) {
       try {
-        const health = await (await fetch(base + "/health")).json();
+        const health = await (
+          await fetch(base + "/health", { signal: AbortSignal.timeout(1000) })
+        ).json();
         if (health.app === "learning-workbench") {
           ready = true;
           break;
@@ -129,8 +131,18 @@ test("M02: service, HTTP, and official MCP SDK enforce the same strict read inpu
     }
   } finally {
     await client.close();
-    child.kill("SIGTERM");
-    await new Promise((resolve) => child.once("exit", resolve));
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      child.kill("SIGTERM");
+      await Promise.race([
+        exited,
+        new Promise((resolve) => setTimeout(resolve, 5000).unref()),
+      ]);
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });

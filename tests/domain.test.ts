@@ -1,3 +1,4 @@
+import { comparedReviewArgs } from "./review-args.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +44,8 @@ async function data(
   args: unknown = {},
   actor: Actor = "local_user",
 ) {
-  const result = await invoke(service, tool, args, actor);
+  const checkedArgs = await comparedReviewArgs(service, tool, args, actor);
+  const result = await invoke(service, tool, checkedArgs, actor);
   assert.equal(
     result.ok,
     true,

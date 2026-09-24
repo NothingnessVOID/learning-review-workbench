@@ -23,3 +23,6 @@ artifacts/private/
 .env.*
 !.env.example
 artifacts/ui-regression/*.zip
+
+artifacts/habit-regression/*.zip
+artifacts/handoff-regression/*.zip

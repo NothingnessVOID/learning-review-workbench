@@ -55,6 +55,10 @@ try {
   await page.locator(".topic-link").first().click();
   await page.waitForURL(/#topic\//);
   await page.locator(".teaching-block").first().waitFor();
+  assert.match(
+    await page.locator(".teaching-block").first().getAttribute("data-teaching-block-id"),
+    /^tb_/,
+  );
   const topicUrl = page.url();
   const topicTitle = await page.locator("#main h1").innerText();
   // U01: entering a short topic and leaving before the scroll debounce still records it.
@@ -70,6 +74,7 @@ try {
   await opener.click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "quick-text");
   assert.match(
     await page.locator(".relation-chip").innerText(),
     new RegExp(topicTitle.slice(0, 8)),
