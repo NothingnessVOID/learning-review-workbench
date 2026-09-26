@@ -1,6 +1,18 @@
 # 交接与进度
 
-当前第二轮复审版本为 1.2.0，基准为 109a904。修复聚焦续读真正落库、本地日历筛选、完整正文比较、确认关联的一致性，以及复盘交接与快速记录。逐项结论和复跑命令见 `SECOND_REVIEW.md`，实际日志见 `artifacts/test-results/second-*`。
+当前第三轮修整目标版本为 1.3.0，复查基准为 1848d5165d7c5a935629919fa9415bb00d655195（1.2.0）。前两轮修复继续保留，详见 `SECOND_REVIEW.md`；本轮状态与证据详见 `THIRD_REVIEW.md`。
+
+## 第三轮修整状态
+
+- C01 关联读取：已按单次服务请求构建关系快照，保留正向、反向与已确认关系及权限、归档过滤。`get_topic` 和 `get_knowledge_card` 的隔离合成基准覆盖 100/1,000/10,000 条笔记，每次各读取笔记表一次；具体时延和运行环境见 `artifacts/test-results/third-relation-benchmark.json`。定向关系测试通过。
+- C02 双标签页草稿：真实 Playwright 双页脚本通过（`artifacts/test-results/third-drafts-ui.log`）；首次浏览器运行发现并修复新草稿 revision 缺省导致误冲突，之后复跑通过。覆盖并发编辑、保存隔离、刷新、关闭恢复、旧键迁移及失败保存保留。
+- C03 文件载入竞态：确定性异步 Playwright 脚本通过（`artifacts/test-results/third-note-ui.log`），覆盖延迟输入、A/B 乱序、读取失败、导航返回和重新载入。
+- C04 旧复盘交接字段：基准集成夹具曾遗漏待核项；修复后全量单测断言与浏览器交接检查通过，保留复盘 gaps、授权依据和记录回链。
+- C05 统一后续时间线：全量单测及真实浏览器交错时间线检查通过，改动限于展示。
+
+新增检查使用隔离临时 SQLite 与合成数据。全量单测 66/66、C02 与 C03/C04/C05 两项真实 Playwright 脚本、HTTP 回归、stdio MCP 授权路径及旧 UI smoke/regression E2E 已通过，日志在 `artifacts/test-results/third-*`。build/CI 和正式数据升级路径仍待最终回归。不得将私人资料包、真实数据库、原始文件名或内容写入公开日志。
+
+最初全量单测因旧测试把 `get_status.app_version` 固定断言为 1.2.0 而记录 65/66。断言现读取 `package.json` 版本，修正后重跑完整套件 66/66 通过，见 `artifacts/test-results/third-unit-final.txt`。
 
 ## 工程验收
 

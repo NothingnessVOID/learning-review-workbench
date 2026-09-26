@@ -80,9 +80,13 @@ try {
   const sentence = `DEMO UI 失败重试验收 ${Date.now()}`;
   await page.getByRole("button", { name: /写下我的理解/ }).click();
   await page.locator("#quick-text").fill(sentence);
-  const before = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("workbench.quick-draft")),
+  const beforeDrafts = await page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("workbench.quick-draft.entry."))
+      .map((key) => JSON.parse(localStorage.getItem(key))),
   );
+  const before = beforeDrafts.find((entry) => entry.draft.text === sentence);
+  assert.ok(before, "quick draft was not persisted in its per-editor slot");
   await page.route("**/api/rpc", async (route) => {
     const payload = JSON.parse(route.request().postData() || "{}");
     if (payload.tool === "create_note") await route.abort();
@@ -90,11 +94,12 @@ try {
   });
   await page.getByRole("button", { name: "保存记录" }).click();
   await page.getByText("保存失败，草稿已留在本机").waitFor();
-  const failed = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("workbench.quick-draft")),
-  );
-  assert.equal(failed.text, sentence);
-  assert.equal(failed.requestId, before.requestId);
+  const failed = await page.evaluate((id) => {
+    const key = `workbench.quick-draft.entry.${id}`;
+    return JSON.parse(localStorage.getItem(key) || "null");
+  }, before.id);
+  assert.equal(failed?.draft.text, sentence);
+  assert.equal(failed?.draft.requestId, before.draft.requestId);
   await page.unroute("**/api/rpc");
   await page.reload();
   await page
@@ -102,12 +107,20 @@ try {
     .first()
     .click();
   assert.equal(await page.locator("#quick-text").inputValue(), sentence);
-  const reloaded = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("workbench.quick-draft")),
-  );
-  assert.equal(reloaded.requestId, before.requestId);
+  const reloaded = await page.evaluate((id) => {
+    const key = `workbench.quick-draft.entry.${id}`;
+    return JSON.parse(localStorage.getItem(key) || "null");
+  }, before.id);
+  assert.equal(reloaded?.draft.requestId, before.draft.requestId);
   await page.getByRole("button", { name: "保存记录" }).click();
   await page.getByText("记录已保存").waitFor();
+  assert.equal(
+    await page.evaluate((id) =>
+      localStorage.getItem(`workbench.quick-draft.entry.${id}`),
+    before.id),
+    null,
+    "successful save should clear the submitted per-editor draft",
+  );
   await page.goto(`${base}/#notes`);
   await page.getByText(sentence).waitFor();
   assert.equal(await page.getByText(sentence).count(), 1);

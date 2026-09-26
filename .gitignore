@@ -26,3 +26,15 @@ artifacts/ui-regression/*.zip
 
 artifacts/habit-regression/*.zip
 artifacts/handoff-regression/*.zip
+
+# Browser traces can embed absolute workspace paths; keep them local.
+artifacts/third-review/**/*.zip
+# Debug stack traces can expose machine-specific filesystem locations.
+artifacts/test-results/*-debug.log
+# Keep the successful, synthetic third-round browser logs reviewable.
+!artifacts/test-results/third-drafts-ui.log
+!artifacts/test-results/third-note-ui.log
+!artifacts/test-results/third-e2e.log
+# Superseded failing runs are retained locally; publish only final passing results.
+artifacts/test-results/third-unit.txt
+artifacts/test-results/third-e2e.txt

@@ -22,13 +22,24 @@ jobs:
       - run: node scripts/habit-ui-test.mjs
       - run: node scripts/handoff-ui-test.mjs
       - run: node scripts/long-benchmark.mjs
+      - run: node scripts/third-relation-benchmark.mjs
+      - run: node scripts/third-drafts-ui-test.mjs
+      - run: node scripts/third-note-ui-test.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: regression-evidence
           path: |
-            artifacts/screenshots/
-            artifacts/ui-regression/
-            artifacts/habit-regression/
-            artifacts/handoff-regression/
-            artifacts/test-results/
+            artifacts/screenshots/**/*.png
+            artifacts/ui-regression/**/*.png
+            artifacts/habit-regression/**/*.png
+            artifacts/handoff-regression/**/*.png
+            artifacts/third-review/**/*.png
+            artifacts/test-results/third-relation-benchmark.json
+            artifacts/test-results/third-targeted.txt
+            artifacts/test-results/third-unit-final.txt
+            artifacts/test-results/third-drafts-ui.log
+            artifacts/test-results/third-note-ui.log
+            artifacts/test-results/third-e2e.log
+            artifacts/test-results/third-http.txt
+            artifacts/test-results/third-habit-mcp.txt

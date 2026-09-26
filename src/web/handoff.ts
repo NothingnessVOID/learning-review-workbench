@@ -66,6 +66,23 @@ function when(note: Pick<Note, "occurred_at" | "created_at">) {
 function refText(ref: SourceRef) {
   return `${ref.source_document_id} / ${ref.source_version_id} / ${ref.source_block_id || "区段未标"}`;
 }
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function reviewBasis(value: unknown, selectedNoteIds: Set<string>) {
+  if (typeof value === "string") return value;
+  if (!isObject(value)) return "【依据格式未知，未随交接提供】";
+  if (typeof value.note_id === "string")
+    return selectedNoteIds.has(value.note_id)
+      ? `原始记录 ${value.note_id}（/#note/${value.note_id}）`
+      : "【此依据关联未选记录，未随交接提供】";
+  if (
+    typeof value.source_document_id === "string" &&
+    typeof value.source_version_id === "string"
+  )
+    return `固定引用：${refText(value as SourceRef)}（原文请按本次来源附载情况核对）`;
+  return "【依据格式未知，未随交接提供】";
+}
 export function handoffMarkdown(
   result: HandoffResult,
   selection: HandoffSelection,
@@ -81,9 +98,18 @@ export function handoffMarkdown(
     parts.push(
       `\n## 选定相关记录 ${note.id}\n${when(note)}\n${note.original_text}`,
     );
+  const selectedNoteIds = new Set([
+    selection.note_id,
+    ...selection.related_note_ids,
+  ]);
   for (const review of result.reviews || [])
     parts.push(
-      `\n## 选定先前复盘 ${review.id}\n写入时间：${review.created_at || "未记录"}\n方法：${review.method_name || "未注明"}${review.method_version ? ` · ${review.method_version}` : ""}\n${review.body_md}`,
+      `\n## 选定先前复盘 ${review.id}\n写入时间：${review.created_at || "未记录"}\n作者身份：${review.author_type || "未注明"}\n原始记录回链：${
+        (review.note_ids || [])
+          .filter((id) => selectedNoteIds.has(id))
+          .map((id) => `/#note/${id}`)
+          .join("、") || "未记录"
+      }\n方法：${review.method_name || "未注明"}${review.method_version ? ` · ${review.method_version}` : ""}\n${review.body_md}\n此复盘的待核项：${review.gaps?.length ? `\n${review.gaps.map((gap) => `- ${String(gap)}`).join("\n")}` : "无单独记录"}\n此复盘的依据：${review.basis?.length ? `\n${review.basis.map((basis) => `- ${reviewBasis(basis, selectedNoteIds)}`).join("\n")}` : "无单独记录"}`,
     );
   for (const note of result.feedback_notes || [])
     parts.push(

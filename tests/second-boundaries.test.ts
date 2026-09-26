@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Service } from "../src/domain/service.js";
+
+const appVersion = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 
 async function fixture(run: (service: Service) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), "workbench-second-boundaries-"));
@@ -727,6 +731,6 @@ test("B07/B08 list states and scoped case/review details remain reachable throug
       libraryCase.id,
     );
     grant(service, true, [first.id, second.id]);
-    assert.equal((await data(service, "get_status")).app_version, "1.2.0");
+    assert.equal((await data(service, "get_status")).app_version, appVersion);
   });
 });

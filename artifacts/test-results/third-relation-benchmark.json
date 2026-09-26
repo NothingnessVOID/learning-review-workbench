@@ -1,0 +1,55 @@
+{
+  "synthetic": true,
+  "platform": "darwin",
+  "node": "v26.0.0",
+  "rows": [
+    {
+      "note_count": 100,
+      "tool": "get_topic",
+      "notes_reads": 1,
+      "notes_decoded": 100,
+      "relations_reads": 1,
+      "elapsed_ms": 5.06
+    },
+    {
+      "note_count": 100,
+      "tool": "get_knowledge_card",
+      "notes_reads": 1,
+      "notes_decoded": 100,
+      "relations_reads": 1,
+      "elapsed_ms": 0.74
+    },
+    {
+      "note_count": 1000,
+      "tool": "get_topic",
+      "notes_reads": 1,
+      "notes_decoded": 1000,
+      "relations_reads": 1,
+      "elapsed_ms": 2.07
+    },
+    {
+      "note_count": 1000,
+      "tool": "get_knowledge_card",
+      "notes_reads": 1,
+      "notes_decoded": 1000,
+      "relations_reads": 1,
+      "elapsed_ms": 1.43
+    },
+    {
+      "note_count": 10000,
+      "tool": "get_topic",
+      "notes_reads": 1,
+      "notes_decoded": 10000,
+      "relations_reads": 1,
+      "elapsed_ms": 17.07
+    },
+    {
+      "note_count": 10000,
+      "tool": "get_knowledge_card",
+      "notes_reads": 1,
+      "notes_decoded": 10000,
+      "relations_reads": 1,
+      "elapsed_ms": 12.84
+    }
+  ]
+}

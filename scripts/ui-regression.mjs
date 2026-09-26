@@ -43,7 +43,14 @@ const waitFor = async (predicate) => {
   throw Error("intercept not reached");
 };
 const storage = (key) =>
-  page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "null"), key);
+  page.evaluate((key) => {
+    const id = sessionStorage.getItem(`workbench.editor.${key}`);
+    if (!id) return null;
+    const entry = JSON.parse(
+      localStorage.getItem(`${key}.entry.${id}`) || "null",
+    );
+    return entry?.draft || null;
+  }, key);
 try {
   await page.goto(base + "/#courses");
   await page.getByText("独立演示资料").waitFor();

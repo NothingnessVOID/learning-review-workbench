@@ -1,0 +1,54 @@
+# 第三轮修整记录
+
+目标版本：1.3.0
+固定复查基准：`1848d5165d7c5a935629919fa9415bb00d655195`（1.2.0）
+范围：C01 关联查询、C02 多标签页草稿、C03 异步文件载入、C04 旧复盘交接、C05 后续时间线。
+
+本记录区分旧基准复现、本轮已经取得的局部证据和仍待总体验收的项目。只有标明实际运行命令及结果的项目才算通过。测试使用隔离临时库和合成内容；没有把用户正式库、私人课程资料或原始资料包纳入公开测试。
+
+## 旧基准复现
+
+基准集成模板在固定旧版本上运行失败 2/2：C01 主题查询针对 80 条无关联笔记读取笔记表 81 次；C04 交接输出遗漏所选旧复盘专属的待核项。日志为 `artifacts/test-results/third-baseline.txt`。测试进程总耗时约 245 秒，其中 Node 导入仓库依赖在本机文件系统等待；两个断言自身耗时分别约 44 毫秒与 0.3 毫秒。这是缺陷复现，不是通过证据。
+
+## 问题、触发条件与修复边界
+
+| 项目 | 触发条件与影响 | 本轮修复方向 | 数据兼容 | 当前证据 |
+|---|---|---|---|---|
+| C01 关联读取 | 打开主题或知识卡时，候选笔记循环内再次读取全体笔记，笔记增加后形成平方级工作。 | 每个业务请求批量构建关系快照，统一查直接、反向和已确认关系；候选过滤仍执行读取权限和归档规则。列表关系过滤及多条选中记录的来源检查复用同一请求快照。没有跨请求缓存或新增持久化索引。 | 无 schema 或笔记格式迁移；保留现有 `relation_ids` 与关系表记录。 | `get_topic` 与 `get_knowledge_card` 真实 `Service.invoke` 隔离基准 100/1,000/10,000 条通过；定向语义测试通过；全量单测 66/66 通过。 |
+| C02 多标签草稿 | 两个同源标签页先后打开快速记录，较旧的空内存状态可能覆盖另一页尚未提交的文字。 | 草稿以独立条目身份持久化并作冲突协调；打开编辑器时不应清空另一条未提交内容。首次真实浏览器验收还发现新草稿 revision 缺省时误判冲突，修正后重跑通过。 | 保留旧 `workbench.quick-draft` 内容读取迁移、刷新、关闭后恢复；无数据库迁移。 | `scripts/third-drafts-ui-test.mjs` 真实 Playwright 通过，日志 `artifacts/test-results/third-drafts-ui.log`。覆盖双页编辑/保存、非破坏打开、刷新、关页恢复、反馈/复盘隔离、保存失败及旧键迁移。 |
+| C03 文件载入竞态 | 选择 Markdown 文件后，`File.text()` 尚未完成时继续输入或选择另一个文件，较早返回的读取结果可能覆盖新内容。 | 通过读取代次、起始草稿版本和当前编辑器状态识别过期结果；发生冲突时保留新文字，将旧内容作为候选；显式处理读取失败。 | 不更改已保存复盘或数据库结构；仅改变未提交编辑器的冲突处理。 | `scripts/third-note-ui-test.mjs` 真实 Playwright 通过；日志 `artifacts/test-results/third-note-ui.log`，覆盖 A 延迟后输入、A/B 乱序、读取失败、离开后返回/刷新和新文件载入。 |
+| C04 旧复盘交接 | 选择历史复盘时，正文被带入交接，但该复盘自身的 `gaps` / `basis` 可能遗漏。 | 随所选复盘输出其专属待核项和已授权依据；不因依据自动扩展用户选择范围。作者、方法版本、时间和原记录回链应继续保留。 | 只扩展交接 Markdown 表达，不改历史复盘记录；未知或未授权依据不能夹带。 | 基准遗漏已复现；集成断言在全量单测通过，且 `third-note-ui.log` 的浏览器交接检查通过。 |
+| C05 后续时间线 | 页面按复盘、反馈分组拼接，日期交错时顺序不能体现时间先后。 | 展示层合并复盘与反馈并统一排序，标出事件发生时间和写入时间来源；同时间采用稳定次序，缺时间不补造。 | 只改变展示，不重写历史原话或迁移原有时间字段。 | `third-note-ui.log` 的真实浏览器检查通过，覆盖交错时间轴；全量单测另有 interleaved timeline 断言。 |
+
+## 已执行的 C01 验收
+
+运行命令：
+
+```sh
+node --import tsx --test tests/relation-scan.test.ts
+node --import tsx scripts/third-relation-benchmark.mjs
+```
+
+关系测试结果：1/1 通过，覆盖直接与反向关联、已确认关系、未确认/拒绝关系、授权可见性、归档过滤，以及关系状态变更后的读取结果。
+基准使用本机 Node v26.0.0 和隔离 SQLite，实际调用 `Service.invoke('get_topic', ...)`、`Service.invoke('get_knowledge_card', ...)`。每次 API 调用均只读笔记表一次，并解码该规模全部笔记；关系表一次。它不是用户机器响应时间承诺。
+
+| 合成笔记数 | API | 笔记表读取 / 解码行数 | 关系表读取 | 实际耗时 |
+|---:|---|---:|---:|---:|
+| 100 | `get_topic` | 1 / 100 | 1 | 5.06 ms |
+| 100 | `get_knowledge_card` | 1 / 100 | 1 | 0.74 ms |
+| 1,000 | `get_topic` | 1 / 1,000 | 1 | 2.07 ms |
+| 1,000 | `get_knowledge_card` | 1 / 1,000 | 1 | 1.43 ms |
+| 10,000 | `get_topic` | 1 / 10,000 | 1 | 17.07 ms |
+| 10,000 | `get_knowledge_card` | 1 / 10,000 | 1 | 12.84 ms |
+
+详细机器可读结果：`artifacts/test-results/third-relation-benchmark.json`。本次按选中记录复用单次快照的来源检查路径已避免每条选中记录单独重读所有关系；未将完整交接流程声明为独立端到端验收。
+
+## 回归与发布状态
+
+CI 已配置 `npm test`（包含 `tests/third-review.integration.test.ts`）、`scripts/third-relation-benchmark.mjs`、`scripts/third-drafts-ui-test.mjs` 和 `scripts/third-note-ui-test.mjs`。artifact 上传规则仅包含 PNG 截图、成功日志和 C01 benchmark JSON，不包含 trace、debug log、失败日志或备份。CI 远程运行尚未发生，本机本轮实际结果见下文。
+
+首次全量单测为 65/66，唯一失败是旧版本测试把 `get_status.app_version` 固定断言为 `1.2.0`。现已改为读取 `package.json` 版本并与服务状态比较；修正后重新运行完整套件，`artifacts/test-results/third-unit-final.txt` 记录 66/66 通过。
+
+本轮全量单元测试 66/66 通过，C02 的双页草稿脚本及 C03/C04/C05 的文件载入、交接和时间线脚本均在真实 Playwright 浏览器通过。旧 UI smoke 与回归 E2E 也通过，覆盖阅读、来源、位置、保存失败重试、时间线、归档恢复、关系审核、草稿、导入导出及 1280/768/390 视口；日志 `artifacts/test-results/third-e2e.log`。HTTP 回归及 stdio MCP 授权路径通过，日志分别为 `artifacts/test-results/third-http.txt` 与 `artifacts/test-results/third-habit-mcp.txt`。浏览器测试只使用合成记录；截图来自隔离合成工作区。build/CI 和正式数据升级路径尚待最终回归；本记录不将旧仓库已有的 61/61 记录当成本轮重新运行结果。真实资料包的完整分类、回链及入库仍未完成，正式库没有写入合成记录。
+
+公开材料边界：CI artifact 现使用明确白名单，仅上传 PNG 截图、成功的第三轮测试日志和 C01 benchmark JSON；基准缺陷复现日志保留在仓库工作区供审查，不作为 CI 成功结果上传。Playwright `trace.zip` 可能记录绝对工作区路径、页面快照及合成草稿正文，已由 `.gitignore` 排除并留在本地用于复核；`*-debug.log` 和正式备份产物也保持本地。公开截图和成功日志使用合成数据。

@@ -49,6 +49,7 @@ npm start
 - docs/PROJECT_REQUIREMENTS.md、docs/REVIEW_GUIDE.md
 - docs/DATA_SCHEMA.md、docs/BACKUP_RESTORE.md、docs/PRIVACY.md
 - schemas/ 与 prompts/：外部 Agent 的格式和处理约定
+- docs/THIRD_REVIEW.md：第三轮修整范围、证据与未完成验收
 
 ## 常见问题
 
@@ -72,3 +73,7 @@ Mac 双击 **更新并启动工作台.command**，检查源码和锁文件后重
 续读位置会按讲义锚点写入数据库；日期筛选按浏览器所在时区计算。课程审核读取带修订信息的完整旧正文，过期比较不能采用。已确认关联可从记录、主题和知识卡两侧找回；复盘交接可明确选择先前复盘与后续反馈，改变选择会使旧预览失效。
 
 本轮工程验收由隔离数据库、真实浏览器及 stdio 客户端完成，不要求使用者代跑工程清单。逐项结论、命令和材料边界见 [第二轮复审记录](docs/SECOND_REVIEW.md)。
+
+## 1.3 第三轮修整
+
+本轮处理关联读取规模、跨标签草稿、异步复盘文件载入、旧复盘交接字段和记录时间线。版本号与当前证据边界见 [第三轮复审记录](docs/THIRD_REVIEW.md)。全量单测 66/66、C02 双页草稿与 C03/C04/C05 文件载入/交接/时间线隔离 Playwright 检查、HTTP 回归、stdio MCP 授权路径及旧 UI smoke/regression E2E 已通过；C01 的真实 Service API 合成基准覆盖 100、1,000、10,000 条笔记。build/CI 和正式数据升级路径仍待最终回归。

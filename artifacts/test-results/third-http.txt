@@ -1,0 +1,1 @@
+HTTP regression passed: independent cookie jars, reused tab session, downloads across two ports, Host/Origin/CSRF, UI-only tools, running build.

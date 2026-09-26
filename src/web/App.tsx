@@ -12,6 +12,7 @@ import { normalizeExportParams, usePersistentDraft } from "./drafts";
 import { readableChanges } from "./diff";
 import { handoffMarkdown, sameHandoffSelection } from "./handoff";
 import type { HandoffResult, HandoffSelection } from "./handoff";
+import { noteTimeline } from "./note-timeline";
 import {
   captureReaderPosition,
   chooseReaderPosition,
@@ -399,6 +400,9 @@ export default function App() {
     update: setComposer,
     current: composerRef,
     clearSubmitted: clearComposer,
+    recoverable: recoverableComposer,
+    recover: recoverComposer,
+    conflict: composerConflict,
   } = usePersistentDraft<ComposerDraft>("workbench.quick-draft", emptyComposer);
   const quickSaving = useRef(false);
   const [quickBusy, setQuickBusy] = useState(false);
@@ -469,7 +473,11 @@ export default function App() {
   }, [fontSize]);
   const openQuick = (intent: "quick" | "understanding" = "quick") => {
     const current = composerRef.current;
-    if (!current.text && !current.relationDismissed) {
+    if (
+      !current.text &&
+      !current.relationDismissed &&
+      !recoverableComposer.length
+    ) {
       const related =
         ["topic", "card", "course"].includes(route.page) && route.id;
       const title = related
@@ -741,6 +749,27 @@ export default function App() {
             <p className="muted">
               此刻不必整理完整。原话会独立保存，之后还能补充和复盘。
             </p>
+            {!composer.text && recoverableComposer.length > 0 && (
+              <div className="draft-recovery">
+                <p className="small-muted">找回其他页面留下的未提交记录：</p>
+                {recoverableComposer.map((entry) => (
+                  <button
+                    className="secondary"
+                    key={entry.id}
+                    onClick={() => {
+                      if (recoverComposer(entry.id)) setComposerState("idle");
+                    }}
+                  >
+                    恢复：{entry.draft.text.slice(0, 40) || "未写正文的记录"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {composerConflict && (
+              <p className="small-muted">
+                另一页面修改了同一草稿；本页输入已另存，两个版本均可找回。
+              </p>
+            )}
             <label htmlFor="quick-text" className="sr-only">
               记录内容
             </label>
@@ -2002,6 +2031,8 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     update: setFeedback,
     current: feedbackRef,
     clearSubmitted: clearFeedback,
+    recoverable: recoverableFeedback,
+    recover: recoverFeedback,
   } = usePersistentDraft(`workbench.feedback.${id}`, () => ({
     text: "",
     requestId: requestId(),
@@ -2011,6 +2042,8 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
     update: setReview,
     current: reviewRef,
     clearSubmitted: clearReview,
+    recoverable: recoverableReviews,
+    recover: recoverReview,
   } = usePersistentDraft(`workbench.review.${id}`, () => ({
     text: "",
     method: "",
@@ -2023,6 +2056,50 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
   const [busy, setBusy] = useState("");
   const busyRef = useRef(false);
   const [writeError, setWriteError] = useState("");
+  const [fileCandidate, setFileCandidate] = useState<{
+    name: string;
+    text: string;
+  } | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+  const fileGeneration = useRef(0);
+  const fileMounted = useRef(false);
+  useEffect(() => {
+    fileMounted.current = true;
+    return () => {
+      fileMounted.current = false;
+      fileGeneration.current++;
+    };
+  }, [id]);
+  const loadReviewFile = async (file: File) => {
+    const generation = ++fileGeneration.current;
+    const startingDraft = reviewRef.current;
+    setFileCandidate(null);
+    setFileLoading(false);
+    if (file.size > 1024 * 1024) {
+      setWriteError("文件超过 1 MB，请改为粘贴需要归档的文字。");
+      return;
+    }
+    setWriteError("");
+    setFileLoading(true);
+    try {
+      const text = await file.text();
+      if (!fileMounted.current || generation !== fileGeneration.current) return;
+      if (
+        reviewRef.current.requestId !== startingDraft.requestId ||
+        reviewRef.current.text !== startingDraft.text
+      ) {
+        setFileCandidate({ name: file.name, text });
+        return;
+      }
+      setReview((current) => ({ ...current, text, requestId: requestId() }));
+    } catch (error) {
+      if (fileMounted.current && generation === fileGeneration.current)
+        setWriteError(`文件读取失败：${messageOf(error)}`);
+    } finally {
+      if (fileMounted.current && generation === fileGeneration.current)
+        setFileLoading(false);
+    }
+  };
   const [failedAction, setFailedAction] = useState<
     "feedback" | "review" | null
   >(null);
@@ -2561,42 +2638,72 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
         {!note.reviews?.length && !note.followups?.length && (
           <Empty>目前还没有后续。稍后回来也来得及。</Empty>
         )}
-        {note.reviews?.map((r) => (
-          <section className="timeline-panel" key={r.id}>
-            <span className="eyebrow">
-              外部复盘 · {dateLabel(r.created_at)}
-            </span>
-            {r.method_name && (
-              <p className="small-muted">
-                方法：{r.method_name}
-                {r.method_version ? ` · ${r.method_version}` : ""}
-              </p>
-            )}
-            <Markdown>{r.body_md}</Markdown>
-            {r.gaps?.length ? (
-              <p className="small-muted">
-                待核：{r.gaps.map(String).join("、")}
-              </p>
-            ) : null}
-          </section>
-        ))}
-        {note.followups?.map((f) => (
-          <button
-            className="timeline-panel followup-panel"
-            key={f.id}
-            onClick={() => go(`note/${f.id}`)}
-          >
-            <span className="eyebrow">
-              {f.type === "feedback" ? "后续反馈" : "后续记录"} ·{" "}
-              {dateLabel(f.occurred_at || f.created_at)}
-            </span>
-            <p>{f.original_text}</p>
-            <span className="small-muted">查看这条记录 ↗</span>
-          </button>
-        ))}
+        {noteTimeline(note).map((entry) => {
+          if (entry.kind === "review") {
+            const r = entry.value;
+            return (
+              <section className="timeline-panel" key={`review:${r.id}`}>
+                <span className="eyebrow">
+                  外部复盘 · 写入于 {dateLabel(r.created_at)}
+                </span>
+                {r.method_name && (
+                  <p className="small-muted">
+                    方法：{r.method_name}
+                    {r.method_version ? ` · ${r.method_version}` : ""}
+                  </p>
+                )}
+                <Markdown>{r.body_md}</Markdown>
+                {r.gaps?.length ? (
+                  <p className="small-muted">
+                    待核：{r.gaps.map(String).join("、")}
+                  </p>
+                ) : null}
+              </section>
+            );
+          }
+          const f = entry.value;
+          return (
+            <button
+              className="timeline-panel followup-panel"
+              key={`followup:${f.id}`}
+              onClick={() => go(`note/${f.id}`)}
+            >
+              <span className="eyebrow">
+                {f.type === "feedback" ? "后续反馈" : "后续记录"} ·{" "}
+                {entry.time_source === "occurred_at"
+                  ? "发生于"
+                  : entry.time_source === "created_at"
+                    ? "写入于"
+                    : "日期未记录"}{" "}
+                {entry.effective_at ? dateLabel(entry.effective_at) : ""}
+              </span>
+              <p>{f.original_text}</p>
+              <span className="small-muted">
+                {f.occurred_at
+                  ? `写入于 ${dateLabel(f.created_at)} · `
+                  : "发生时间未记录 · "}
+                查看这条记录 ↗
+              </span>
+            </button>
+          );
+        })}
         <section className="entry-panel">
           <h2>补一条后续</h2>
           <p className="muted">后来做了什么、结果如何，可以只写一句。</p>
+          {recoverableFeedback.length > 0 && !feedback.text && (
+            <div className="small-muted">
+              可恢复的同记录反馈草稿：{" "}
+              {recoverableFeedback.map((item) => (
+                <button
+                  key={item.id}
+                  className="text-button"
+                  onClick={() => recoverFeedback(item.id)}
+                >
+                  恢复 {new Date(item.updatedAt).toLocaleString("zh-CN")}
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             rows={4}
             value={feedback.text}
@@ -2657,22 +2764,76 @@ function NotePage({ id, notify }: { id: string; notify: (s: string) => void }) {
             <input
               type="file"
               accept=".md,.txt,text/plain,text/markdown"
-              onChange={async (e) => {
+              onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (!file) return;
-                if (file.size > 1024 * 1024) {
-                  setWriteError("文件超过 1 MB，请改为粘贴需要归档的文字。");
-                  return;
-                }
-                const text = await file.text();
-                setReview((current) => ({
-                  ...current,
-                  text,
-                  requestId: requestId(),
-                }));
+                e.target.value = "";
+                if (file) void loadReviewFile(file);
               }}
             />
           </label>
+          {fileLoading && (
+            <p className="small-muted" role="status">
+              正在读取复盘文件…
+            </p>
+          )}
+          {fileCandidate && (
+            <div className="preview-box">
+              <p>
+                读取 {fileCandidate.name}{" "}
+                期间草稿发生了变化。当前文字已保留，可自行决定如何使用文件内容。
+              </p>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setReview((current) => ({
+                    ...current,
+                    text: fileCandidate.text,
+                    requestId: requestId(),
+                  }));
+                  setFileCandidate(null);
+                }}
+              >
+                用文件内容替换
+              </button>{" "}
+              <button
+                className="secondary"
+                onClick={() => {
+                  setReview((current) => ({
+                    ...current,
+                    text: `${current.text}${current.text ? "\n\n" : ""}${fileCandidate.text}`,
+                    requestId: requestId(),
+                  }));
+                  setFileCandidate(null);
+                }}
+              >
+                追加文件内容
+              </button>{" "}
+              <button
+                className="text-button"
+                onClick={() => setFileCandidate(null)}
+              >
+                忽略文件内容
+              </button>
+            </div>
+          )}
+          {recoverableReviews.length > 0 &&
+            !review.text &&
+            !review.method &&
+            !review.version &&
+            !review.gaps && (
+              <div className="small-muted">
+                可恢复的同记录复盘草稿：{" "}
+                {recoverableReviews.map((item) => (
+                  <button
+                    key={item.id}
+                    className="text-button"
+                    onClick={() => recoverReview(item.id)}
+                  >
+                    恢复 {new Date(item.updatedAt).toLocaleString("zh-CN")}
+                  </button>
+                ))}
+              </div>
+            )}
           <textarea
             rows={8}
             value={review.text}

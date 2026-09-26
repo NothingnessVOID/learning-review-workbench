@@ -1,0 +1,13 @@
+✔ topic and card relation reads preserve direction, status, permissions and archives (16.147292ms)
+✔ C04 selected review retains independent gaps and scoped basis (0.7205ms)
+✔ C05 interleaved followups and reviews share one stable time axis (5.683041ms)
+✔ C01: opening an unrelated topic must not reload the notes table once per note (14.853375ms)
+✔ C04: selected historical review keeps its unresolved gaps and permitted basis in handoff (0.245792ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 408.172125

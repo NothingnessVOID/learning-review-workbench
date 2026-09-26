@@ -1,0 +1,44 @@
+✖ C01: opening an unrelated topic must not reload the notes table once per note (43.914417ms)
+✖ C04: selected historical review keeps its unresolved gaps and permitted basis in handoff (0.298542ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 245006.070333
+
+✖ failing tests:
+
+test at tests/third-review.integration.test.ts:1:262
+✖ C01: opening an unrelated topic must not reload the notes table once per note (43.914417ms)
+  AssertionError [ERR_ASSERTION]: notes table loaded 81 times for 80 unrelated notes
+      at TestContext.<anonymous> (.data/third-baseline/tests/third-review.integration.test.ts:45:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/third-review.integration.test.ts:1:1688
+✖ C04: selected historical review keeps its unresolved gaps and permitted basis in handoff (0.298542ms)
+  AssertionError [ERR_ASSERTION]: Do not lose a selected review-specific uncertainty
+      at TestContext.<anonymous> (.data/third-baseline/tests/third-review.integration.test.ts:62:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

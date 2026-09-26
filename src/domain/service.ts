@@ -38,6 +38,10 @@ import { readRuntimeContext } from "./context.js";
 import { readToolSchemas, sharedToolSchemas } from "./contracts.js";
 import { listNotesSchema, searchLibrarySchema } from "./contracts.js";
 export type Actor = "local_user" | "external_agent";
+type RelationSnapshot = {
+  notes: Obj[];
+  linkedIds: Map<string, Set<string>>;
+};
 export const sharedTools = [
   "get_status",
   "get_agent_context",
@@ -443,15 +447,27 @@ export class Service {
         cursor + limit < items.length ? String(cursor + limit) : null,
     };
   }
-  resolvedRelations(note: Obj, actor: Actor) {
-    const ids = new Set<string>(note.relation_ids ?? []);
-    for (const other of this.store.all("notes"))
-      if (other.id !== note.id && (other.relation_ids ?? []).includes(note.id))
-        ids.add(other.id);
-    for (const r of this.store.all("relations")) {
-      if (r.status === "confirmed" && r.from_id === note.id) ids.add(r.to_id);
-      if (r.status === "confirmed" && r.to_id === note.id) ids.add(r.from_id);
+  relationSnapshot(includeArchivedNotes = false): RelationSnapshot {
+    const notes = this.store.all("notes", includeArchivedNotes);
+    const linkedIds = new Map<string, Set<string>>(
+      notes.map((note) => [note.id, new Set<string>(note.relation_ids ?? [])]),
+    );
+    // A direct link on either active note is visible from both ends.
+    for (const note of notes) {
+      if (note.archived) continue;
+      for (const id of note.relation_ids ?? [])
+        if (id !== note.id) linkedIds.get(id)?.add(note.id);
     }
+    for (const relation of this.store.all("relations")) {
+      if (relation.status !== "confirmed") continue;
+      linkedIds.get(relation.from_id)?.add(relation.to_id);
+      linkedIds.get(relation.to_id)?.add(relation.from_id);
+    }
+    return { notes, linkedIds };
+  }
+  resolvedRelations(note: Obj, actor: Actor, snapshot?: RelationSnapshot) {
+    const current = snapshot ?? this.relationSnapshot();
+    const ids = current.linkedIds.get(note.id) ?? new Set<string>(note.relation_ids ?? []);
     return [...ids]
       .filter((id) => id !== note.id)
       .map((id) => {
@@ -570,8 +586,13 @@ export class Service {
     const refKeys = new Set<string>();
     {
       const linkedIds = new Set<string>();
+      const relationSnapshot = this.relationSnapshot();
       for (const selected of [note, ...relatedNotes, ...feedbackNotes])
-        for (const linked of this.resolvedRelations(selected, actor))
+        for (const linked of this.resolvedRelations(
+          selected,
+          actor,
+          relationSnapshot,
+        ))
           linkedIds.add(linked.id);
       for (const linkedId of linkedIds) {
         const found = this.store.find(linkedId);
@@ -675,18 +696,19 @@ export class Service {
     };
   }
   notesFor(objectId: string, actor: Actor) {
-    return this.store
-      .all("notes")
+    const snapshot = this.relationSnapshot();
+    return snapshot.notes
       .filter(
         (n) =>
           this.canReadNote(n.id, actor) &&
-          this.resolvedRelations(n, actor).some(
+          snapshot.linkedIds.get(n.id)?.has(objectId) &&
+          this.resolvedRelations(n, actor, snapshot).some(
             (linked: Obj) => linked.id === objectId,
           ),
       )
       .map((n) => ({
         ...n,
-        relation_ids: this.resolvedRelations(n, actor).map(
+        relation_ids: this.resolvedRelations(n, actor, snapshot).map(
           (linked: Obj) => linked.id,
         ),
         parent_note_id:
@@ -729,7 +751,7 @@ export class Service {
       case "get_status": {
         const counts = s.counts();
         return {
-          app_version: "1.2.0",
+          app_version: "1.3.0",
           schema_version: "1.0.0",
           data_dir: actor === "local_user" ? this.dir : undefined,
           counts: {
@@ -972,14 +994,18 @@ export class Service {
         const p = parse(listNotesSchema, a);
         const limit = p.limit ?? 30,
           cursor = p.cursor ?? 0;
-        let all = s
-          .all("notes", actor === "local_user" && a.include_archived === true)
+        const snapshot = this.relationSnapshot(
+          actor === "local_user" && a.include_archived === true,
+        );
+        let all = snapshot.notes
           .filter((n) => this.canReadNote(n.id, actor));
         if (p.type) all = all.filter((n) => n.type === p.type);
-        if (p.relation_id)
+        const relationId = p.relation_id;
+        if (relationId)
           all = all.filter((n) =>
-            this.resolvedRelations(n, actor).some(
-              (linked: Obj) => linked.id === p.relation_id,
+            snapshot.linkedIds.get(n.id)?.has(relationId) &&
+            this.resolvedRelations(n, actor, snapshot).some(
+              (linked: Obj) => linked.id === relationId,
             ),
           );
         const { from, to, end } = this.dateBounds(p);
@@ -1012,7 +1038,7 @@ export class Service {
             occurred_at: n.occurred_at,
             created_at: n.created_at,
             archived: n.archived,
-            relation_ids: this.resolvedRelations(n, actor).map(
+            relation_ids: this.resolvedRelations(n, actor, snapshot).map(
               (r: any) => r.id,
             ),
             web_path: `/#note/${n.id}`,
@@ -1031,7 +1057,8 @@ export class Service {
           "此记录未被单独授权。",
         );
         const n = s.get("notes", a.note_id)!;
-        const resolved = this.resolvedRelations(n, actor);
+        const snapshot = this.relationSnapshot(true);
+        const resolved = this.resolvedRelations(n, actor, snapshot);
         return {
           ...n,
           relation_ids: resolved.map((r: any) => r.id),
@@ -1054,7 +1081,7 @@ export class Service {
             )
             .map((f) => ({
               ...f,
-              relation_ids: this.resolvedRelations(f, actor).map(
+              relation_ids: this.resolvedRelations(f, actor, snapshot).map(
                 (linked: Obj) => linked.id,
               ),
             })),

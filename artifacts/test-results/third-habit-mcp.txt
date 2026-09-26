@@ -1,0 +1,1 @@
+B08 passed: actual stdio search → full review/case → original notes/source; partial note revocation and library revocation enforced.
