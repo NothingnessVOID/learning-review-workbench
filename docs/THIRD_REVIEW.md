@@ -45,10 +45,12 @@ node --import tsx scripts/third-relation-benchmark.mjs
 
 ## 回归与发布状态
 
-CI 已配置 `npm test`（包含 `tests/third-review.integration.test.ts`）、`scripts/third-relation-benchmark.mjs`、`scripts/third-drafts-ui-test.mjs` 和 `scripts/third-note-ui-test.mjs`。artifact 上传规则仅包含 PNG 截图、成功日志和 C01 benchmark JSON，不包含 trace、debug log、失败日志或备份。CI 远程运行尚未发生，本机本轮实际结果见下文。
+GitHub main 的代码提交 `ee32cfb` 对应 CI run `36251395037` 已全部通过，包含构建、单测、MCP、HTTP、E2E、habit、handoff、长文本基准及 C01/C02/C03 浏览器检查。CI 的 artifact 白名单仅包含 PNG 截图、成功日志和 C01 benchmark JSON，不包含 trace、debug log、失败日志或备份。
 
 首次全量单测为 65/66，唯一失败是旧版本测试把 `get_status.app_version` 固定断言为 `1.2.0`。现已改为读取 `package.json` 版本并与服务状态比较；修正后重新运行完整套件，`artifacts/test-results/third-unit-final.txt` 记录 66/66 通过。
 
-本轮全量单元测试 66/66 通过，C02 的双页草稿脚本及 C03/C04/C05 的文件载入、交接和时间线脚本均在真实 Playwright 浏览器通过。旧 UI smoke 与回归 E2E 也通过，覆盖阅读、来源、位置、保存失败重试、时间线、归档恢复、关系审核、草稿、导入导出及 1280/768/390 视口；日志 `artifacts/test-results/third-e2e.log`。HTTP 回归及 stdio MCP 授权路径通过，日志分别为 `artifacts/test-results/third-http.txt` 与 `artifacts/test-results/third-habit-mcp.txt`。浏览器测试只使用合成记录；截图来自隔离合成工作区。build/CI 和正式数据升级路径尚待最终回归；本记录不将旧仓库已有的 61/61 记录当成本轮重新运行结果。真实资料包的完整分类、回链及入库仍未完成，正式库没有写入合成记录。
+本轮全量单元测试 66/66 通过，C02 的双页草稿脚本及 C03/C04/C05 的文件载入、交接和时间线脚本均在真实 Playwright 浏览器通过。旧 UI smoke 与回归 E2E 也通过，覆盖阅读、来源、位置、保存失败重试、时间线、归档恢复、关系审核、草稿、导入导出及 1280/768/390 视口；日志 `artifacts/test-results/third-e2e.log`。HTTP 回归及 stdio MCP 授权路径通过，日志分别为 `artifacts/test-results/third-http.txt` 与 `artifacts/test-results/third-habit-mcp.txt`。浏览器测试只使用合成记录；截图来自隔离合成工作区。
+
+本机正式服务和独立演示均已运行 1.3.0，构建指纹前缀为 `6a56b952`。正式数据升级前的本地备份已校验；升级后检查确认 12 张业务表、权限设置及来源字节哈希与升级前快照一致，SQLite 完整性检查通过。这里仅记录验收结论，不公开备份位置或内容。真实资料包完整分类、回链和入库仍未完成。
 
 公开材料边界：CI artifact 现使用明确白名单，仅上传 PNG 截图、成功的第三轮测试日志和 C01 benchmark JSON；基准缺陷复现日志保留在仓库工作区供审查，不作为 CI 成功结果上传。Playwright `trace.zip` 可能记录绝对工作区路径、页面快照及合成草稿正文，已由 `.gitignore` 排除并留在本地用于复核；`*-debug.log` 和正式备份产物也保持本地。公开截图和成功日志使用合成数据。
