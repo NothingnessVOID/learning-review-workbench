@@ -22,7 +22,7 @@ jobs:
       - run: node scripts/habit-ui-test.mjs
       - run: node scripts/handoff-ui-test.mjs
       - run: node scripts/long-benchmark.mjs
-      - run: node scripts/third-relation-benchmark.mjs
+      - run: node --import tsx scripts/third-relation-benchmark.mjs
       - run: node scripts/third-drafts-ui-test.mjs
       - run: node scripts/third-note-ui-test.mjs
       - uses: actions/upload-artifact@v4

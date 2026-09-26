@@ -27,6 +27,17 @@ await context.tracing.start({
 const marker = `HANDOFF-${Date.now()}`;
 let failed = false;
 
+async function readActiveDraft(key) {
+  return page.evaluate((baseKey) => {
+    const id = sessionStorage.getItem(`workbench.editor.${baseKey}`);
+    if (!id) return null;
+    const entry = JSON.parse(
+      localStorage.getItem(`${baseKey}.entry.${id}`) || "null",
+    );
+    return entry?.draft || null;
+  }, key);
+}
+
 function holdRpc(tool, predicate = () => true) {
   let release;
   let reached;
@@ -402,10 +413,7 @@ try {
     name: /本次复盘同时回连交接中已选的/,
   });
   await linkCheck.check();
-  const firstDraft = await page.evaluate(
-    (id) => JSON.parse(localStorage.getItem(`workbench.review.${id}`)),
-    noteA.id,
-  );
+  const firstDraft = await readActiveDraft(`workbench.review.${noteA.id}`);
   assert.deepEqual(firstDraft.linkedNoteIds, [noteB.id]);
   held = holdRpc(
     "save_review_result",
@@ -423,20 +431,14 @@ try {
     .locator('.handoff-options input[type="checkbox"]')
     .first()
     .uncheck();
-  const secondDraft = await page.evaluate(
-    (id) => JSON.parse(localStorage.getItem(`workbench.review.${id}`)),
-    noteA.id,
-  );
+  const secondDraft = await readActiveDraft(`workbench.review.${noteA.id}`);
   assert.deepEqual(secondDraft.linkedNoteIds, [noteC.id]);
   assert.notEqual(secondDraft.requestId, firstDraft.requestId);
   held.release();
   await page.unroute("**/api/rpc", held.handler);
   await page.getByText("上一版复盘已归档，新输入仍留在草稿中").waitFor();
   assert.deepEqual(
-    await page.evaluate(
-      (id) => JSON.parse(localStorage.getItem(`workbench.review.${id}`)),
-      noteA.id,
-    ),
+    await readActiveDraft(`workbench.review.${noteA.id}`),
     secondDraft,
   );
   const saveB = page.waitForRequest(
